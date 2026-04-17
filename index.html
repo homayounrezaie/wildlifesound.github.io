@@ -868,8 +868,8 @@
      (the Auth0 SPA SDK is built for browser use; security comes from
      the Allowed Callback URL whitelist in your Auth0 dashboard).
   ================================================================ */
-  const AUTH0_DOMAIN    = 'YOUR_AUTH0_DOMAIN';   // e.g. dev-xxxx.us.auth0.com
-  const AUTH0_CLIENT_ID = 'YOUR_CLIENT_ID';       // from Auth0 dashboard → Applications
+  const AUTH0_DOMAIN    = 'dev-cosudi1bgf7lczvs';   // e.g. dev-xxxx.us.auth0.com
+  const AUTH0_CLIENT_ID = 'ZYiSRDTl0ousy6QRwMIy6CVAPiZANLUc';       // from Auth0 dashboard → Applications
 
   /* ================================================================
      CONSTANTS
@@ -954,10 +954,10 @@
 
     // Remind about Netlify env vars — these are never in the HTML
     const envReminder = `
-      <li><strong>GEMINI_API_KEY</strong> — set in Vercel dashboard → Site settings → Environment variables
+      <li><strong>GEMINI_API_KEY</strong> — set in Vercel dashboard → Project Settings → Environment Variables
           (<a href="https://aistudio.google.com" target="_blank" rel="noopener">get key</a>)</li>
-      <li><strong>IUCN_API_TOKEN</strong> — set in Vercel dashboard → Site settings → Environment variables
-          (<a href="https://apiv3.iucnredlist.org/" target="_blank" rel="noopener">get token</a>)</li>`;
+      <li><strong>IUCN_API_TOKEN</strong> — set in Vercel dashboard → Project Settings → Environment Variables
+          (<a href="https://api.iucnredlist.org/users/sign_up" target="_blank" rel="noopener">sign up at api.iucnredlist.org</a>)</li>`;
 
     if (!missing.length) {
       // Still show the env-var reminder in a softer style
@@ -1301,35 +1301,16 @@ If you cannot detect any biological species sounds (e.g. pure silence, only wind
      IUCN RED LIST API
   ================================================================ */
   async function fetchIUCN(scientificName) {
-    // Token is injected server-side in netlify/functions/iucn.js
-    const enc = encodeURIComponent(scientificName);
-
-    const [assessRes, narRes] = await Promise.allSettled([
-      fetch(`/api/iucn?type=species&name=${enc}`).then(r => r.json()),
-      fetch(`/api/iucn?type=narrative&name=${enc}`).then(r => r.json())
-    ]);
-
-    let category        = 'DD';
-    let populationTrend = 'Unknown';
-    let habitat         = null;
-
-    if (assessRes.status === 'fulfilled') {
-      const row = assessRes.value?.result?.[0];
-      if (row) {
-        category        = row.category       || 'DD';
-        populationTrend = row.population_trend || 'Unknown';
-      }
-    }
-
-    if (narRes.status === 'fulfilled') {
-      const row = narRes.value?.result?.[0];
-      if (row?.habitat) {
-        const clean = row.habitat.replace(/<[^>]+>/g, ' ').replace(/\s+/g,' ').trim();
-        habitat = clean.length > 120 ? clean.slice(0,120) + '…' : clean;
-      }
-    }
-
-    return { category, populationTrend, habitat };
+    // Proxy handles all v4 API complexity — returns { category, populationTrend, habitat }
+    const res = await fetch(`/api/iucn?name=${encodeURIComponent(scientificName)}`);
+    if (!res.ok) throw new Error(`IUCN proxy error ${res.status}`);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    return {
+      category:        data.category        ?? 'DD',
+      populationTrend: data.populationTrend ?? 'Unknown',
+      habitat:         data.habitat         ?? null
+    };
   }
 
   /* ================================================================
