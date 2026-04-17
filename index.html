@@ -868,7 +868,7 @@
      (the Auth0 SPA SDK is built for browser use; security comes from
      the Allowed Callback URL whitelist in your Auth0 dashboard).
   ================================================================ */
-  const AUTH0_DOMAIN    = 'dev-cosudi1bgf7lczvs';   // e.g. dev-xxxx.us.auth0.com
+  const AUTH0_DOMAIN    = 'dev-cosudi1bgf7lczvs.us.auth0.com';   // e.g. dev-xxxx.us.auth0.com
   const AUTH0_CLIENT_ID = 'ZYiSRDTl0ousy6QRwMIy6CVAPiZANLUc';       // from Auth0 dashboard → Applications
 
   /* ================================================================
@@ -952,29 +952,24 @@
         url: 'https://auth0.com/signup'
       });
 
-    // Remind about Netlify env vars — these are never in the HTML
-    const envReminder = `
-      <li><strong>GEMINI_API_KEY</strong> — set in Vercel dashboard → Project Settings → Environment Variables
-          (<a href="https://aistudio.google.com" target="_blank" rel="noopener">get key</a>)</li>
-      <li><strong>IUCN_API_TOKEN</strong> — set in Vercel dashboard → Project Settings → Environment Variables
-          (<a href="https://api.iucnredlist.org/users/sign_up" target="_blank" rel="noopener">sign up at api.iucnredlist.org</a>)</li>`;
-
-    if (!missing.length) {
-      // Still show the env-var reminder in a softer style
-      $('config-banner').innerHTML =
-        `<strong>ℹ Netlify environment variables required</strong> — these keys must be set in your
-         <a href="https://app.netlify.com" target="_blank" rel="noopener">Vercel dashboard</a>,
-         NOT in this file:<ul>${envReminder}</ul>`;
-      $('config-banner').classList.add('visible');
-      return true;
+    // Warn if AUTH0_DOMAIN is missing the .auth0.com suffix
+    if (AUTH0_DOMAIN && AUTH0_DOMAIN !== 'YOUR_AUTH0_DOMAIN' &&
+        !AUTH0_DOMAIN.includes('.auth0.com')) {
+      missing.push({
+        k: 'AUTH0_DOMAIN',
+        label: `"${AUTH0_DOMAIN}" looks incomplete — it must be the full domain, e.g. dev-xxxx.us.auth0.com`,
+        url: 'https://manage.auth0.com'
+      });
     }
+
+    if (!missing.length) return true; // All good — no banner
 
     $('config-banner').innerHTML =
       `<strong>⚠ CONFIGURATION INCOMPLETE</strong><ul>` +
       missing.map(m =>
-        `<li><strong>${esc(m.k)}</strong> — ${esc(m.label)}:
+        `<li><strong>${esc(m.k)}</strong> — ${esc(m.label)}
          <a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.url)}</a></li>`
-      ).join('') + envReminder + `</ul>`;
+      ).join('') + `</ul>`;
     $('config-banner').classList.add('visible');
     return false;
   }
