@@ -875,7 +875,6 @@
      CONSTANTS
   ================================================================ */
   const RECORDING_SECONDS = 10;
-  const LS_KEY            = 'lastbreath_sightings';
   const CIRCUMFERENCE     = 2 * Math.PI * 64; // r=64 → 402.124
 
   /* ================================================================
@@ -1522,7 +1521,14 @@ If you cannot detect any biological species sounds (e.g. pure silence, only wind
     try {
       gemini = await callGemini(b64, mimeType);
     } catch (err) {
-      appendErrorCard('species-grid', 'Gemini API Error', err.message, err.raw || null);
+      const isOverload = err.message?.includes('503') || err.message?.toLowerCase().includes('overload');
+      appendErrorCard('species-grid',
+        isOverload ? 'Gemini Overloaded — Try Again' : 'Gemini API Error',
+        isOverload
+          ? 'Google\'s servers are under high demand right now.\nWait 30 seconds then hit the record button again.'
+          : err.message,
+        err.raw || null
+      );
       setRecordState('idle');
       return;
     }
@@ -1632,31 +1638,39 @@ If you cannot detect any biological species sounds (e.g. pure silence, only wind
         return;
       }
 
-      const user   = await auth0Client.getUser();
+      const user = await auth0Client.getUser();
       renderAuthUI(true, user?.email);
-      const record = {
-        id:              Date.now() + '-' + Math.random().toString(36).slice(2,9),
-        timestamp:       new Date().toISOString(),
-        common_name:     sp.common_name,
-        scientific_name: sp.scientific_name,
-        iucn_category:   sp.iucn?.category || 'DD',
-        lat:             userLatLng?.lat ?? null,
-        lng:             userLatLng?.lng ?? null,
-        city:            userCity,
-        user_sub:        user?.sub       || 'anonymous',
-        user_email:      user?.email     || null
-      };
 
-      const all = JSON.parse(localStorage.getItem(LS_KEY) || '[]');
-      all.push(record);
-      localStorage.setItem(LS_KEY, JSON.stringify(all));
+      btn.textContent = 'Saving…';
+      btn.disabled    = true;
+
+      const res = await fetch('/api/sightings', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          common_name:     sp.common_name,
+          scientific_name: sp.scientific_name,
+          iucn_category:   sp.iucn?.category || 'DD',
+          lat:             userLatLng?.lat    ?? null,
+          lng:             userLatLng?.lng    ?? null,
+          city:            userCity,
+          user_sub:        user?.sub          || 'anonymous',
+          user_email:      user?.email        || null
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Server error ${res.status}`);
+      }
 
       btn.textContent = '✓ Sighting logged';
       btn.classList.add('logged');
-      btn.disabled = true;
       toast('Sighting verified & logged. You are now part of the record.');
       refreshMap();
     } catch (err) {
+      btn.textContent = 'Log this sighting →';
+      btn.disabled    = false;
       toast('Error logging sighting: ' + err.message, 'error');
     }
   }
@@ -1698,16 +1712,22 @@ If you cannot detect any biological species sounds (e.g. pure silence, only wind
 
   let _lastMapCount = 0;
 
-  function refreshMap() {
+  async function refreshMap() {
     if (!leafletMap) return;
+
+    // Fetch all sightings from Supabase via proxy
+    let all = [];
+    try {
+      const r = await fetch('/api/sightings');
+      if (r.ok) all = await r.json();
+    } catch { /* network offline — leave map as-is */ }
+
+    const valid = all.filter(s => s.lat != null && s.lng != null);
 
     // Clear existing markers
     leafletMap.eachLayer(layer => {
       if (layer instanceof L.Marker) leafletMap.removeLayer(layer);
     });
-
-    const all   = JSON.parse(localStorage.getItem(LS_KEY) || '[]');
-    const valid = all.filter(s => s.lat != null && s.lng != null);
 
     valid.forEach(s => {
       const el = document.createElement('div');
@@ -1736,13 +1756,13 @@ If you cannot detect any biological species sounds (e.g. pure silence, only wind
         .addTo(leafletMap);
     });
 
-    const locs  = new Set(valid.map(s => `${s.lat.toFixed(2)},${s.lng.toFixed(2)}`)).size;
+    const locs = new Set(valid.map(s => `${(+s.lat).toFixed(2)},${(+s.lng).toFixed(2)}`)).size;
     $('sightings-counter').textContent =
       `${all.length} species sighting${all.length !== 1 ? 's' : ''} logged across ${locs} location${locs !== 1 ? 's' : ''}`;
 
-    // Fly to newly added sighting
+    // Fly to newest sighting when one is freshly added
     if (all.length > _lastMapCount && valid.length > 0) {
-      const newest = valid[valid.length - 1];
+      const newest = valid[0]; // ordered newest-first from API
       leafletMap.flyTo([newest.lat, newest.lng], Math.max(leafletMap.getZoom(), 8), {
         animate: true, duration: 1.4
       });
@@ -1805,13 +1825,17 @@ If you cannot detect any biological species sounds (e.g. pure silence, only wind
       toast('You are now signed in. Please click "Log this sighting" again on the species card.', 'success', 6000);
     }
 
-    // Init sightings counter immediately (even before map renders)
-    const all  = JSON.parse(localStorage.getItem(LS_KEY) || '[]');
-    const locs = new Set(
-      all.filter(s => s.lat && s.lng).map(s => `${(+s.lat).toFixed(2)},${(+s.lng).toFixed(2)}`)
-    ).size;
-    $('sightings-counter').textContent =
-      `${all.length} species sighting${all.length !== 1 ? 's' : ''} logged across ${locs} location${locs !== 1 ? 's' : ''}`;
+    // Load sightings counter on page load (before map scrolls into view)
+    fetch('/api/sightings')
+      .then(r => r.ok ? r.json() : [])
+      .then(all => {
+        const valid = all.filter(s => s.lat && s.lng);
+        const locs  = new Set(valid.map(s => `${(+s.lat).toFixed(2)},${(+s.lng).toFixed(2)}`)).size;
+        $('sightings-counter').textContent =
+          `${all.length} species sighting${all.length !== 1 ? 's' : ''} logged across ${locs} location${locs !== 1 ? 's' : ''}`;
+        _lastMapCount = all.length;
+      })
+      .catch(() => { $('sightings-counter').textContent = 'Sightings unavailable offline.'; });
   }
 
   // Bootstrap
