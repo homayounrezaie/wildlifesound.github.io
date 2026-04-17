@@ -702,6 +702,135 @@
     }
 
     /* ================================================================
+       WELCOME MODAL
+    ================================================================ */
+    #welcome-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: rgba(10,14,11,.92);
+      backdrop-filter: blur(12px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      animation: fadeSlideUp .4s ease-out;
+    }
+    #welcome-overlay.hidden { display: none; }
+
+    #welcome-modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: clamp(24px, 5vw, 40px);
+      max-width: 520px;
+      width: 100%;
+      position: relative;
+    }
+
+    .welcome-tag {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      letter-spacing: .22em;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 14px;
+    }
+
+    .welcome-title {
+      font-family: 'DM Serif Display', Georgia, serif;
+      font-style: italic;
+      font-size: clamp(1.8rem, 6vw, 2.6rem);
+      color: var(--accent);
+      line-height: 1.1;
+      margin-bottom: 12px;
+      text-shadow: 0 0 40px rgba(61,255,122,.2);
+    }
+
+    .welcome-desc {
+      font-family: 'DM Serif Display', Georgia, serif;
+      font-size: clamp(13px, 2.5vw, 15px);
+      color: var(--text-muted);
+      line-height: 1.65;
+      margin-bottom: 28px;
+    }
+
+    .welcome-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+
+    .welcome-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+
+    .step-num {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      color: var(--accent);
+      background: rgba(61,255,122,.08);
+      border: 1px solid rgba(61,255,122,.2);
+      border-radius: 4px;
+      padding: 2px 7px;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .step-text {
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.55;
+    }
+
+    .step-text strong {
+      color: var(--text);
+      display: block;
+      margin-bottom: 2px;
+      font-weight: 500;
+    }
+
+    .welcome-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .welcome-note {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      color: var(--text-dim);
+      letter-spacing: .04em;
+    }
+
+    #welcome-start-btn {
+      background: var(--accent);
+      color: #0a0e0b;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 28px;
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: .1em;
+      cursor: pointer;
+      transition: opacity .2s, transform .15s;
+      white-space: nowrap;
+    }
+    #welcome-start-btn:hover  { opacity: .88; transform: scale(1.03); }
+    #welcome-start-btn:active { transform: scale(.97); }
+
+    /* ================================================================
        SCROLLBAR
     ================================================================ */
     ::-webkit-scrollbar          { width: 4px; }
@@ -790,6 +919,55 @@
   </style>
 </head>
 <body>
+
+  <!-- ── WELCOME MODAL (first visit only) ──────────────────────────── -->
+  <div id="welcome-overlay">
+    <div id="welcome-modal" role="dialog" aria-modal="true" aria-labelledby="welcome-heading">
+      <div class="welcome-tag">Acoustic Biodiversity Monitor — v1.0</div>
+      <div class="welcome-title" id="welcome-heading">Last Breath</div>
+      <p class="welcome-desc">
+        The world's soundscapes are going quiet. This tool listens to any outdoor
+        environment through your microphone, identifies every species by sound alone,
+        and tells you — in real time — how threatened they are.
+      </p>
+
+      <div class="welcome-steps">
+        <div class="welcome-step">
+          <span class="step-num">01</span>
+          <div class="step-text">
+            <strong>Go outside — or open a window</strong>
+            Best results near vegetation, at dawn or dusk when wildlife is most active.
+          </div>
+        </div>
+        <div class="welcome-step">
+          <span class="step-num">02</span>
+          <div class="step-text">
+            <strong>Press the record button</strong>
+            Hold your device up. A 10-second clip is all it needs. A live waveform confirms your mic is working.
+          </div>
+        </div>
+        <div class="welcome-step">
+          <span class="step-num">03</span>
+          <div class="step-text">
+            <strong>Read your soundscape report</strong>
+            Each detected species is cross-referenced against the IUCN Red List — the world's most authoritative record of which species are disappearing and how fast.
+          </div>
+        </div>
+        <div class="welcome-step">
+          <span class="step-num">04</span>
+          <div class="step-text">
+            <strong>Log a verified sighting</strong>
+            Sign in to add your observation to the global map. Every record counts.
+          </div>
+        </div>
+      </div>
+
+      <div class="welcome-footer">
+        <span class="welcome-note">You won't see this again</span>
+        <button id="welcome-start-btn">BEGIN LISTENING →</button>
+      </div>
+    </div>
+  </div>
 
   <noscript>
     <div style="background:#ff4d4d;color:#fff;font-family:monospace;font-size:13px;padding:12px 24px;text-align:center">
@@ -1854,7 +2032,42 @@ If you cannot detect any biological species sounds (e.g. pure silence, only wind
   /* ================================================================
      ENTRY POINT
   ================================================================ */
+  /* ================================================================
+     WELCOME MODAL — shows once, never again
+  ================================================================ */
+  function initWelcome() {
+    const overlay = $('welcome-overlay');
+    const btn     = $('welcome-start-btn');
+
+    // If they've been here before, skip it entirely
+    if (localStorage.getItem('lb_welcomed')) {
+      overlay.classList.add('hidden');
+      return;
+    }
+
+    // Dismiss on button click or backdrop click
+    btn.addEventListener('click', dismissWelcome);
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay) dismissWelcome();
+    });
+
+    // Also dismiss on Escape key
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') dismissWelcome();
+    }, { once: true });
+  }
+
+  function dismissWelcome() {
+    const overlay = $('welcome-overlay');
+    overlay.style.animation = 'toastOut .3s ease-out forwards';
+    setTimeout(() => overlay.classList.add('hidden'), 300);
+    localStorage.setItem('lb_welcomed', '1');
+  }
+
   async function init() {
+    // Welcome modal — first visit only
+    initWelcome();
+
     // Online status
     updateOnlineStatus();
     window.addEventListener('online',  updateOnlineStatus);
