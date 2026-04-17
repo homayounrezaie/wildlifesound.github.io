@@ -704,105 +704,223 @@
     /* ================================================================
        WELCOME MODAL
     ================================================================ */
+    @keyframes welcomeIn {
+      from { opacity:0; transform: scale(.96) translateY(16px); }
+      to   { opacity:1; transform: scale(1)   translateY(0); }
+    }
+    @keyframes statCount {
+      from { opacity:0; transform: translateY(8px); }
+      to   { opacity:1; transform: translateY(0); }
+    }
+    @keyframes scanProgress {
+      from { width: 0; }
+      to   { width: 100%; }
+    }
+    @keyframes stepIn {
+      from { opacity:0; transform: translateX(-10px); }
+      to   { opacity:1; transform: translateX(0); }
+    }
+
     #welcome-overlay {
       position: fixed;
       inset: 0;
       z-index: 9999;
-      background: rgba(10,14,11,.92);
-      backdrop-filter: blur(12px);
+      background:
+        radial-gradient(ellipse at 50% 100%, rgba(61,255,122,.06) 0%, transparent 60%),
+        rgba(10,14,11,.96);
+      backdrop-filter: blur(16px);
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 20px;
-      animation: fadeSlideUp .4s ease-out;
+      padding: clamp(16px, 4vw, 24px);
+      overflow-y: auto;
     }
     #welcome-overlay.hidden { display: none; }
 
     #welcome-modal {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: clamp(24px, 5vw, 40px);
-      max-width: 520px;
+      border-radius: 18px;
+      padding: clamp(28px, 6vw, 48px);
+      max-width: 580px;
       width: 100%;
       position: relative;
+      overflow: hidden;
+      animation: welcomeIn .5s cubic-bezier(.16,1,.3,1) forwards;
+      box-shadow:
+        0 0 0 1px rgba(61,255,122,.06),
+        0 32px 64px rgba(0,0,0,.6),
+        0 0 80px rgba(61,255,122,.04);
+    }
+
+    /* Top accent line that scans in */
+    #welcome-modal::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0;
+      height: 2px;
+      background: linear-gradient(to right, transparent, var(--accent), transparent);
+      animation: scanProgress 1.2s cubic-bezier(.4,0,.2,1) .3s both;
+    }
+
+    /* Subtle corner glow */
+    #welcome-modal::after {
+      content: '';
+      position: absolute;
+      bottom: -60px; right: -60px;
+      width: 200px; height: 200px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(61,255,122,.05) 0%, transparent 70%);
+      pointer-events: none;
     }
 
     .welcome-tag {
       font-family: 'DM Mono', monospace;
       font-size: 10px;
-      letter-spacing: .22em;
-      color: var(--text-muted);
+      letter-spacing: .24em;
+      color: var(--accent);
       text-transform: uppercase;
-      margin-bottom: 14px;
+      margin-bottom: 16px;
+      opacity: .7;
     }
 
     .welcome-title {
       font-family: 'DM Serif Display', Georgia, serif;
       font-style: italic;
-      font-size: clamp(1.8rem, 6vw, 2.6rem);
+      font-size: clamp(2.2rem, 8vw, 3.2rem);
       color: var(--accent);
-      line-height: 1.1;
-      margin-bottom: 12px;
-      text-shadow: 0 0 40px rgba(61,255,122,.2);
+      line-height: 1;
+      margin-bottom: 6px;
+      text-shadow:
+        0 0 40px rgba(61,255,122,.35),
+        0 0 80px rgba(61,255,122,.12);
+    }
+
+    .welcome-line {
+      width: 48px;
+      height: 1px;
+      background: var(--accent);
+      opacity: .5;
+      margin-bottom: 18px;
+      animation: scanLine .8s cubic-bezier(.4,0,.2,1) .6s both;
+      transform-origin: left;
     }
 
     .welcome-desc {
       font-family: 'DM Serif Display', Georgia, serif;
-      font-size: clamp(13px, 2.5vw, 15px);
+      font-size: clamp(14px, 2.5vw, 16px);
       color: var(--text-muted);
-      line-height: 1.65;
+      line-height: 1.7;
       margin-bottom: 28px;
     }
 
-    .welcome-steps {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
+    /* Stat bar */
+    .welcome-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
       margin-bottom: 28px;
+    }
+
+    .welcome-stat {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 12px;
+      text-align: center;
+      animation: statCount .4s ease-out both;
+    }
+    .welcome-stat:nth-child(1) { animation-delay: .5s; }
+    .welcome-stat:nth-child(2) { animation-delay: .65s; }
+    .welcome-stat:nth-child(3) { animation-delay: .8s; }
+
+    .stat-big {
+      font-family: 'DM Mono', monospace;
+      font-size: clamp(18px, 4vw, 24px);
+      font-weight: 500;
+      color: var(--danger);
+      line-height: 1;
+      margin-bottom: 5px;
+    }
+    .stat-big.green { color: var(--accent); }
+
+    .stat-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: .08em;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      line-height: 1.4;
+    }
+
+    /* Steps */
+    .welcome-steps-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      letter-spacing: .2em;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+
+    .welcome-steps {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-bottom: 32px;
     }
 
     .welcome-step {
       display: flex;
       align-items: flex-start;
-      gap: 14px;
+      gap: 12px;
       background: var(--surface-2);
       border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px 14px;
+      border-radius: 10px;
+      padding: 14px;
+      transition: border-color .2s;
+      animation: stepIn .35s ease-out both;
     }
+    .welcome-step:nth-child(1) { animation-delay: .7s; }
+    .welcome-step:nth-child(2) { animation-delay: .8s; }
+    .welcome-step:nth-child(3) { animation-delay: .9s; }
+    .welcome-step:nth-child(4) { animation-delay: 1s; }
+    .welcome-step:hover { border-color: rgba(61,255,122,.25); }
 
-    .step-num {
+    .step-icon {
+      width: 32px; height: 32px;
+      border-radius: 8px;
+      background: rgba(61,255,122,.07);
+      border: 1px solid rgba(61,255,122,.15);
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .step-icon svg { width: 16px; height: 16px; }
+
+    .step-body { min-width: 0; }
+
+    .step-title {
       font-family: 'DM Mono', monospace;
       font-size: 11px;
-      color: var(--accent);
-      background: rgba(61,255,122,.08);
-      border: 1px solid rgba(61,255,122,.2);
-      border-radius: 4px;
-      padding: 2px 7px;
-      flex-shrink: 0;
-      margin-top: 1px;
-    }
-
-    .step-text {
-      font-family: 'DM Mono', monospace;
-      font-size: 12px;
-      color: var(--text-muted);
-      line-height: 1.55;
-    }
-
-    .step-text strong {
-      color: var(--text);
-      display: block;
-      margin-bottom: 2px;
       font-weight: 500;
+      color: var(--text);
+      letter-spacing: .03em;
+      margin-bottom: 3px;
     }
 
+    .step-desc {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    /* Footer */
     .welcome-footer {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
+      gap: 16px;
       flex-wrap: wrap;
     }
 
@@ -810,25 +928,45 @@
       font-family: 'DM Mono', monospace;
       font-size: 10px;
       color: var(--text-dim);
-      letter-spacing: .04em;
+      letter-spacing: .05em;
     }
 
     #welcome-start-btn {
+      position: relative;
       background: var(--accent);
-      color: #0a0e0b;
+      color: #080c09;
       border: none;
-      border-radius: 8px;
-      padding: 12px 28px;
+      border-radius: 10px;
+      padding: 14px 32px;
       font-family: 'DM Mono', monospace;
       font-size: 12px;
       font-weight: 500;
-      letter-spacing: .1em;
+      letter-spacing: .14em;
       cursor: pointer;
-      transition: opacity .2s, transform .15s;
+      overflow: hidden;
+      transition: transform .15s, box-shadow .2s;
+      box-shadow: 0 0 20px rgba(61,255,122,.2);
       white-space: nowrap;
     }
-    #welcome-start-btn:hover  { opacity: .88; transform: scale(1.03); }
-    #welcome-start-btn:active { transform: scale(.97); }
+    #welcome-start-btn::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,.15) 0%, transparent 60%);
+    }
+    #welcome-start-btn:hover  {
+      transform: translateY(-2px);
+      box-shadow: 0 0 32px rgba(61,255,122,.4);
+    }
+    #welcome-start-btn:active { transform: translateY(0); }
+
+    @media (max-width: 480px) {
+      .welcome-steps   { grid-template-columns: 1fr; }
+      .welcome-stats   { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+      .stat-big        { font-size: 16px; }
+      .welcome-footer  { flex-direction: column; align-items: stretch; text-align: center; }
+      #welcome-start-btn { width: 100%; padding: 16px; }
+    }
 
     /* ================================================================
        SCROLLBAR
@@ -923,49 +1061,95 @@
   <!-- ── WELCOME MODAL (first visit only) ──────────────────────────── -->
   <div id="welcome-overlay">
     <div id="welcome-modal" role="dialog" aria-modal="true" aria-labelledby="welcome-heading">
+
       <div class="welcome-tag">Acoustic Biodiversity Monitor — v1.0</div>
       <div class="welcome-title" id="welcome-heading">Last Breath</div>
+      <div class="welcome-line" aria-hidden="true"></div>
+
       <p class="welcome-desc">
-        The world's soundscapes are going quiet. This tool listens to any outdoor
-        environment through your microphone, identifies every species by sound alone,
-        and tells you — in real time — how threatened they are.
+        The world's soundscapes are going quiet. Point your microphone at any
+        outdoor environment and this tool will tell you exactly what's living
+        there — and what's disappearing.
       </p>
 
+      <!-- Impact stats -->
+      <div class="welcome-stats" aria-label="Biodiversity crisis statistics">
+        <div class="welcome-stat">
+          <div class="stat-big">73%</div>
+          <div class="stat-label">wildlife decline since 1970</div>
+        </div>
+        <div class="welcome-stat">
+          <div class="stat-big">1M+</div>
+          <div class="stat-label">species facing extinction</div>
+        </div>
+        <div class="welcome-stat">
+          <div class="stat-big green">10s</div>
+          <div class="stat-label">to scan your environment</div>
+        </div>
+      </div>
+
+      <!-- Steps -->
+      <div class="welcome-steps-label">How it works</div>
       <div class="welcome-steps">
+
         <div class="welcome-step">
-          <span class="step-num">01</span>
-          <div class="step-text">
-            <strong>Go outside — or open a window</strong>
-            Best results near vegetation, at dawn or dusk when wildlife is most active.
+          <div class="step-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+            </svg>
+          </div>
+          <div class="step-body">
+            <div class="step-title">Record outdoors</div>
+            <div class="step-desc">10 seconds near vegetation. Dawn and dusk are best.</div>
           </div>
         </div>
+
         <div class="welcome-step">
-          <span class="step-num">02</span>
-          <div class="step-text">
-            <strong>Press the record button</strong>
-            Hold your device up. A 10-second clip is all it needs. A live waveform confirms your mic is working.
+          <div class="step-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+          </div>
+          <div class="step-body">
+            <div class="step-title">AI identifies species</div>
+            <div class="step-desc">Gemini analyses acoustic signatures of every sound.</div>
           </div>
         </div>
+
         <div class="welcome-step">
-          <span class="step-num">03</span>
-          <div class="step-text">
-            <strong>Read your soundscape report</strong>
-            Each detected species is cross-referenced against the IUCN Red List — the world's most authoritative record of which species are disappearing and how fast.
+          <div class="step-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+            </svg>
+          </div>
+          <div class="step-body">
+            <div class="step-title">IUCN data cross-check</div>
+            <div class="step-desc">Real conservation status, population trend, habitat.</div>
           </div>
         </div>
+
         <div class="welcome-step">
-          <span class="step-num">04</span>
-          <div class="step-text">
-            <strong>Log a verified sighting</strong>
-            Sign in to add your observation to the global map. Every record counts.
+          <div class="step-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+              <circle cx="12" cy="10" r="3"/>
+            </svg>
+          </div>
+          <div class="step-body">
+            <div class="step-title">Log to global map</div>
+            <div class="step-desc">Sign in to add your sighting to the shared record.</div>
           </div>
         </div>
+
       </div>
 
       <div class="welcome-footer">
-        <span class="welcome-note">You won't see this again</span>
+        <span class="welcome-note">This message won't appear again</span>
         <button id="welcome-start-btn">BEGIN LISTENING →</button>
       </div>
+
     </div>
   </div>
 
