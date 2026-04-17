@@ -1,0 +1,12 @@
+# ── Secrets ────────────────────────────────────────────────────────
+# Never commit real API keys. Set them in Netlify dashboard instead.
+.env
+.env.local
+.env*.local
+
+# ── Vercel local dev cache ────────────────────────────────────────
+.vercel/
+
+# ── OS junk ───────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

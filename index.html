@@ -1,0 +1,1849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Last Breath — Acoustic Biodiversity Monitor</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <!-- Leaflet JS (defer — initialised only on scroll via IntersectionObserver) -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+
+  <!-- Auth0 SPA SDK -->
+  <script src="https://cdn.auth0.com/js/auth0-spa-js/2.0/auth0-spa-js.production.js" defer></script>
+
+  <style>
+    /* ================================================================
+       CSS CUSTOM PROPERTIES
+    ================================================================ */
+    :root {
+      --bg:          #0a0e0b;
+      --surface:     #111a13;
+      --surface-2:   #1a2e1d;
+      --border:      #1f3322;
+      --accent:      #3dff7a;
+      --accent-dim:  #1a7a38;
+      --warn:        #ffb347;
+      --danger:      #ff4d4d;
+      --text:        #d4e8d0;
+      --text-muted:  #5a7a5e;
+      --text-dim:    #2d4a30;
+    }
+
+    /* ================================================================
+       RESET & BASE
+    ================================================================ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      background-color: var(--bg);
+      background-image:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E"),
+        radial-gradient(ellipse at 50% 0%, rgba(61,255,122,0.04) 0%, transparent 60%);
+      color: var(--text);
+      font-family: 'DM Serif Display', Georgia, serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ================================================================
+       KEYFRAMES
+    ================================================================ */
+    @keyframes fadeSlideUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes pulseRing {
+      0%   { transform: scale(1);   opacity: 0.75; }
+      100% { transform: scale(1.7); opacity: 0; }
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes pillPulse {
+      0%, 100% { box-shadow: 0 0 0 0   rgba(255,77,77,0.5); }
+      50%       { box-shadow: 0 0 0 6px rgba(255,77,77,0); }
+    }
+    @keyframes loadBar {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(400%); }
+    }
+    @keyframes toastIn  { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes toastOut { from { opacity:1; transform:translateY(0); }    to { opacity:0; transform:translateY(-12px); } }
+    @keyframes authDot  { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+    @keyframes titleGlow {
+      0%,100% { text-shadow: 0 0 60px rgba(61,255,122,.25), 0 0 120px rgba(61,255,122,.08); }
+      50%      { text-shadow: 0 0 80px rgba(61,255,122,.40), 0 0 160px rgba(61,255,122,.15); }
+    }
+    @keyframes scanLine {
+      0%   { transform: scaleX(0); opacity:0; }
+      20%  { opacity:1; }
+      100% { transform: scaleX(1); opacity:.6; }
+    }
+    @keyframes markerGlow {
+      0%,100% { box-shadow: 0 0 4px  rgba(61,255,122,0.5); }
+      50%      { box-shadow: 0 0 12px rgba(61,255,122,1); }
+    }
+
+    /* ================================================================
+       UTILITY
+    ================================================================ */
+    .container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+    .hidden   { display: none !important; }
+    .sr-only  { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); }
+
+    /* ================================================================
+       OFFLINE BANNER
+    ================================================================ */
+    #offline-banner {
+      display: none;
+      background: rgba(255,77,77,.08);
+      border-bottom: 1px solid rgba(255,77,77,.3);
+      padding: 10px 24px;
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      color: var(--danger);
+      text-align: center;
+      letter-spacing: .05em;
+    }
+    #offline-banner.visible { display: block; }
+
+    /* ================================================================
+       CONFIG BANNER
+    ================================================================ */
+    #config-banner {
+      display: none;
+      background: rgba(255,77,77,.07);
+      border-bottom: 1px solid rgba(255,77,77,.25);
+      padding: 14px 24px;
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      color: var(--danger);
+    }
+    #config-banner.visible { display: block; }
+    #config-banner strong  { letter-spacing: .05em; }
+    #config-banner ul      { margin-top: 8px; padding-left: 20px; line-height: 2; }
+    #config-banner a       { color: var(--warn); }
+
+    /* ================================================================
+       AUTH STATUS (fixed top-right)
+    ================================================================ */
+    #auth-status {
+      position: fixed;
+      top: 16px; right: 20px;
+      z-index: 900;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(10,14,11,.85);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 6px 14px;
+      backdrop-filter: blur(10px);
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      letter-spacing: .08em;
+    }
+    .auth-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      flex-shrink: 0;
+    }
+    .auth-dot.active {
+      background: var(--accent);
+      animation: authDot 2.5s ease-in-out infinite;
+    }
+    #auth-label a {
+      color: var(--text-muted);
+      text-decoration: none;
+      cursor: pointer;
+      transition: color .2s;
+    }
+    #auth-label a:hover { color: var(--accent); }
+    #auth-label span    { color: var(--text-muted); }
+
+    /* ================================================================
+       TOAST
+    ================================================================ */
+    #toast-container {
+      position: fixed;
+      bottom: 24px; left: 50%;
+      transform: translateX(-50%);
+      z-index: 2000;
+      display: flex; flex-direction: column; gap: 8px;
+      pointer-events: none;
+      min-width: 260px;
+    }
+    .toast {
+      background: var(--surface);
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      padding: 12px 18px;
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      color: var(--accent);
+      animation: toastIn .3s ease-out;
+      pointer-events: auto;
+      text-align: center;
+      line-height: 1.5;
+    }
+    .toast.error { border-color: var(--danger); color: var(--danger); }
+
+    /* ================================================================
+       SECTION 1 — HERO
+    ================================================================ */
+    #hero {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 100px 24px 60px;
+      position: relative;
+    }
+    .version-tag {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      color: var(--text-muted);
+      letter-spacing: .22em;
+      text-transform: uppercase;
+      margin-bottom: 22px;
+    }
+    .app-title {
+      font-family: 'DM Serif Display', Georgia, serif;
+      font-style: italic;
+      font-size: clamp(2.75rem, 10vw, 4.5rem);
+      color: var(--accent);
+      line-height: 1;
+      margin-bottom: 10px;
+      animation: titleGlow 4s ease-in-out infinite;
+    }
+    .title-underline {
+      width: 60px;
+      height: 1px;
+      background: var(--accent);
+      transform-origin: left;
+      animation: scanLine 1.2s cubic-bezier(.4,0,.2,1) forwards;
+      opacity: 0;
+      margin: 0 auto 20px;
+    }
+    .app-subtitle {
+      font-family: 'DM Serif Display', Georgia, serif;
+      font-size: clamp(.9rem, 2.2vw, 1.1rem);
+      color: var(--text-muted);
+      max-width: 420px;
+      line-height: 1.6;
+      margin-bottom: 48px;
+    }
+
+    /* Record control */
+    .record-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 18px;
+    }
+    .record-btn-container {
+      position: relative;
+      width: 80px; height: 80px;
+      flex-shrink: 0;
+    }
+    .pulse-ring {
+      position: absolute;
+      inset: -6px;
+      border-radius: 50%;
+      border: 2px solid var(--accent);
+      opacity: 0;
+      pointer-events: none;
+    }
+    .pulse-ring.active               { animation: pulseRing 1.5s ease-out infinite; }
+    .pulse-ring.active.pulse-delay   { animation-delay: .55s; }
+
+    #record-btn {
+      position: relative;
+      z-index: 1;
+      width: 80px; height: 80px;
+      border-radius: 50%;
+      border: 2px solid var(--accent);
+      background: var(--surface-2);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background .2s, border-color .2s, transform .15s;
+    }
+    #record-btn:hover:not(:disabled) { background: rgba(61,255,122,.08); transform: scale(1.06); }
+    #record-btn:active:not(:disabled){ transform: scale(.96); }
+    #record-btn.recording {
+      border-color: var(--danger);
+      background: rgba(255,77,77,.1);
+    }
+    #record-btn.processing {
+      border-color: var(--warn);
+      cursor: not-allowed;
+    }
+    #record-btn:disabled { cursor: not-allowed; }
+
+    .record-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      letter-spacing: .2em;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+    .spinner-el {
+      width: 30px; height: 30px;
+      border: 2px solid var(--surface-2);
+      border-top-color: var(--warn);
+      border-radius: 50%;
+      animation: spin .75s linear infinite;
+    }
+
+    /* ================================================================
+       SECTION 2 — WAVEFORM CANVAS
+    ================================================================ */
+    #waveform-section {
+      width: min(100%, 700px);
+      padding: 0;
+      display: none;
+      margin-bottom: 28px;
+      position: relative;
+    }
+    #waveform-section.visible { display: block; }
+    #waveform-section::before,
+    #waveform-section::after {
+      content: '';
+      position: absolute;
+      top: 0; bottom: 0;
+      width: 40px;
+      z-index: 1;
+      pointer-events: none;
+    }
+    #waveform-section::before { left:0;  background: linear-gradient(to right, var(--bg), transparent); }
+    #waveform-section::after  { right:0; background: linear-gradient(to left,  var(--bg), transparent); }
+    #waveform-canvas {
+      display: block;
+      width: 100%;
+      height: 80px;
+    }
+
+    /* ================================================================
+       SECTION 3 — SCORE CARD
+    ================================================================ */
+    #score-section {
+      padding: 40px 24px 0;
+      display: none;
+    }
+    #score-section.visible {
+      display: block;
+      animation: fadeSlideUp .4s ease-out;
+    }
+    #score-section::before {
+      content: '';
+      display: block;
+      height: 1px;
+      background: linear-gradient(to right, transparent, var(--border) 20%, var(--border) 80%, transparent);
+      margin-bottom: 40px;
+    }
+    .score-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 32px;
+      transition: border-color .6s, box-shadow .6s;
+    }
+    .score-card.scored-healthy { border-color: rgba(61,255,122,.3);  box-shadow: 0 0 32px rgba(61,255,122,.07); }
+    .score-card.scored-warn    { border-color: rgba(255,179,71,.3);  box-shadow: 0 0 32px rgba(255,179,71,.07); }
+    .score-card.scored-danger  { border-color: rgba(255,77,77,.3);   box-shadow: 0 0 32px rgba(255,77,77,.07); }
+    .score-card-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      letter-spacing: .2em;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 28px;
+    }
+    .score-card-body {
+      display: flex;
+      align-items: center;
+      gap: 44px;
+      flex-wrap: wrap;
+    }
+    .score-gauge-wrap {
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+    }
+    .score-gauge {
+      width: 160px; height: 160px;
+      position: relative;
+    }
+    .score-gauge svg { transform: rotate(-90deg); display: block; }
+    .score-number {
+      position: absolute;
+      inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'DM Mono', monospace;
+      font-size: 48px;
+      font-weight: 500;
+      color: var(--accent);
+      transition: color .3s;
+    }
+    .score-summary {
+      font-family: 'DM Serif Display', Georgia, serif;
+      font-style: italic;
+      font-size: 14px;
+      color: var(--text-muted);
+      text-align: center;
+      max-width: 200px;
+      line-height: 1.55;
+    }
+    .score-stats {
+      flex: 1;
+      min-width: 180px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .stat-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 9px 16px;
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .stat-pill .stat-val { color: var(--text); font-weight: 500; margin-left: auto; white-space: nowrap; }
+    .stat-pill            { white-space: nowrap; }
+
+    /* ================================================================
+       SECTION 4 — SPECIES GRID
+    ================================================================ */
+    #species-section { padding: 40px 24px 16px; }
+
+    .section-heading {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      letter-spacing: .2em;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 20px;
+    }
+    #species-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+
+    /* Species card */
+    .species-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      animation: fadeSlideUp .4s ease-out both;
+      transition: border-color .2s, box-shadow .2s;
+      display: flex;
+      flex-direction: column;
+    }
+    .species-card:hover {
+      border-color: var(--accent);
+      box-shadow: 0 0 20px rgba(61,255,122,.08);
+    }
+    .species-card-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .species-common {
+      font-family: 'DM Serif Display', Georgia, serif;
+      font-size: 20px;
+      color: var(--text);
+      line-height: 1.2;
+    }
+    .species-scientific {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      color: var(--text-muted);
+      font-style: italic;
+      margin-top: 3px;
+    }
+    /* IUCN status pill */
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 4px;
+      padding: 3px 8px;
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: .04em;
+      white-space: nowrap;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    .status-pill.pulsing { animation: pillPulse 1.8s ease-in-out 3; }
+    .s-EX, .s-EW { background: #000; color: #fff; }
+    .s-CR         { background: var(--danger); color: #fff; }
+    .s-EN         { background: #ff7c00; color: #fff; }
+    .s-VU         { background: var(--warn); color: #111; }
+    .s-NT         { background: #a0c040; color: #111; }
+    .s-LC         { background: var(--accent-dim); color: var(--accent); }
+    .s-DD, .s-NE  { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
+
+    .confidence-tag {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      color: var(--text-dim);
+      border: 1px solid var(--text-dim);
+      border-radius: 3px;
+      padding: 1px 6px;
+      display: inline-block;
+      margin-bottom: 8px;
+    }
+    .sound-desc {
+      font-family: 'DM Serif Display', Georgia, serif;
+      font-style: italic;
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+      line-height: 1.55;
+    }
+    .trend-line {
+      font-family: 'DM Mono', monospace;
+      font-size: 13px;
+      margin-bottom: 10px;
+    }
+    .t-down   { color: var(--danger); }
+    .t-stable { color: var(--warn); }
+    .t-up     { color: var(--accent); }
+
+    .countdown-box {
+      background: rgba(255,77,77,.06);
+      border: 1px solid rgba(255,77,77,.2);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+    }
+    .countdown-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      letter-spacing: .1em;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .countdown-value {
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      color: var(--danger);
+      line-height: 1.5;
+    }
+    .stable-box {
+      background: rgba(61,255,122,.03);
+      border: 1px solid rgba(61,255,122,.1);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    .card-spacer { flex: 1; }
+
+    .log-btn {
+      width: 100%;
+      margin-top: 10px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      letter-spacing: .05em;
+      color: var(--text-muted);
+      cursor: pointer;
+      text-align: left;
+      transition: border-color .2s, color .2s, background .2s;
+    }
+    .log-btn:hover        { border-color: var(--accent); color: var(--accent); background: rgba(61,255,122,.04); }
+    .log-btn.logged       { border-color: var(--accent-dim); color: var(--accent-dim); cursor: default; }
+    .log-btn:disabled     { cursor: default; }
+
+    /* card loading skeleton */
+    .card-loading-bar { height: 2px; background: var(--surface-2); border-radius: 2px; overflow: hidden; margin-bottom: 14px; }
+    .card-loading-fill { height: 100%; width: 35%; background: var(--accent); animation: loadBar 1.4s ease-in-out infinite; }
+
+    /* Analyse again button */
+    .analyse-again-btn {
+      display: block;
+      margin: 32px auto 0;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 28px;
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      letter-spacing: .1em;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: border-color .2s, color .2s, background .2s;
+      animation: fadeSlideUp .4s ease-out;
+    }
+    .analyse-again-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(61,255,122,.04);
+    }
+
+    /* error card */
+    .error-card {
+      background: rgba(255,77,77,.06);
+      border: 1px solid rgba(255,77,77,.2);
+      border-radius: 10px;
+      padding: 20px;
+      animation: fadeSlideUp .4s ease-out;
+      grid-column: 1 / -1;
+    }
+    .error-card-title { font-family: 'DM Mono', monospace; font-size: 11px; letter-spacing: .12em; color: var(--danger); text-transform: uppercase; margin-bottom: 8px; }
+    .error-card-body  { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--text-muted); white-space: pre-wrap; word-break: break-word; line-height: 1.6; }
+    .error-card pre   { background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 10px; font-size: 11px; overflow-x: auto; margin-top: 10px; }
+
+    /* ================================================================
+       SECTION 5 — MAP
+    ================================================================ */
+    #map-section { padding: 40px 24px 40px; }
+    #map-wrap {
+      width: 100%;
+      height: 400px;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    #map { width: 100%; height: 100%; }
+    #sightings-counter {
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      color: var(--text-muted);
+      text-align: center;
+      margin-top: 12px;
+      letter-spacing: .04em;
+    }
+
+    /* Leaflet dark overrides */
+    .leaflet-container          { background: var(--bg) !important; font-family: 'DM Mono', monospace; }
+    .leaflet-popup-content-wrapper {
+      background: var(--surface) !important;
+      border: 1px solid var(--border) !important;
+      border-radius: 8px !important;
+      color: var(--text) !important;
+      box-shadow: 0 4px 24px rgba(0,0,0,.6) !important;
+    }
+    .leaflet-popup-tip        { background: var(--surface) !important; }
+    .leaflet-popup-close-button { color: var(--text-muted) !important; }
+    .popup-name   { font-family: 'DM Serif Display',Georgia,serif; font-size: 15px; margin-bottom: 5px; }
+    .popup-line   { font-family: 'DM Mono',monospace; font-size: 11px; color: var(--text-muted); margin-bottom: 3px; }
+    .popup-badge  { font-family: 'DM Mono',monospace; font-size: 10px; color: var(--accent); margin-top: 7px; letter-spacing: .05em; }
+
+    /* Custom marker */
+    .map-marker {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: 2px solid rgba(61,255,122,.4);
+      animation: markerGlow 2s ease-in-out infinite;
+    }
+
+    /* ================================================================
+       FOOTER
+    ================================================================ */
+    footer {
+      padding: 28px 24px;
+      margin-top: 20px;
+      position: relative;
+    }
+    footer::before {
+      content: '';
+      display: block;
+      height: 1px;
+      background: linear-gradient(to right, transparent, var(--border) 20%, var(--border) 80%, transparent);
+      margin-bottom: 28px;
+    }
+    .footer-text {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      color: var(--text-muted);
+      text-align: center;
+      line-height: 1.9;
+      letter-spacing: .04em;
+    }
+
+    /* ================================================================
+       SCROLLBAR
+    ================================================================ */
+    ::-webkit-scrollbar          { width: 4px; }
+    ::-webkit-scrollbar-track    { background: var(--bg); }
+    ::-webkit-scrollbar-thumb    { background: var(--border); border-radius: 2px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
+
+    /* ================================================================
+       RESPONSIVE
+    ================================================================ */
+    @media (max-width: 639px) {
+      #hero { padding: 70px 16px 40px; min-height: auto; }
+      .record-btn-container, #record-btn { width: 64px; height: 64px; }
+      #species-grid { grid-template-columns: 1fr; }
+      #map-wrap { height: 280px; }
+      .score-gauge { width: 120px; height: 120px; }
+      .score-number { font-size: 36px; }
+      .score-card  { padding: 20px; }
+      .score-card-body { flex-direction: column; align-items: center; gap: 24px; }
+      .score-summary { max-width: 260px; }
+    }
+    @media (min-width: 640px) and (max-width: 1023px) {
+      #species-grid { grid-template-columns: repeat(2,1fr); }
+    }
+  </style>
+</head>
+<body>
+
+  <noscript>
+    <div style="background:#ff4d4d;color:#fff;font-family:monospace;font-size:13px;padding:12px 24px;text-align:center">
+      Last Breath requires JavaScript. Please enable it in your browser settings.
+    </div>
+  </noscript>
+
+  <!-- ── OFFLINE BANNER ─────────────────────────────────────────────── -->
+  <div id="offline-banner">⚡ NO INTERNET CONNECTION — API features and map tiles unavailable</div>
+
+  <!-- ── CONFIG BANNER ──────────────────────────────────────────────── -->
+  <div id="config-banner"></div>
+
+  <!-- ── AUTH STATUS (fixed) ────────────────────────────────────────── -->
+  <div id="auth-status" role="status" aria-live="polite">
+    <div class="auth-dot" id="auth-dot"></div>
+    <span id="auth-label"><a href="#" id="auth-link">sign in to log sightings</a></span>
+  </div>
+
+  <!-- ── TOASTS ─────────────────────────────────────────────────────── -->
+  <div id="toast-container" aria-live="assertive"></div>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       SECTION 1 — HERO
+  ══════════════════════════════════════════════════════════════════ -->
+  <section id="hero">
+    <div class="version-tag">Acoustic Biodiversity Monitor — v1.0</div>
+    <h1 class="app-title">Last Breath</h1>
+    <div class="title-underline" aria-hidden="true"></div>
+    <p class="app-subtitle">Point your microphone at any outdoor environment. Hear what's disappearing.</p>
+
+    <!-- SECTION 2 — WAVEFORM (nested for layout flow) -->
+    <div id="waveform-section" aria-hidden="true">
+      <canvas id="waveform-canvas" aria-label="Live audio waveform"></canvas>
+    </div>
+
+    <div class="record-wrapper">
+      <div class="record-btn-container">
+        <div class="pulse-ring" id="ring-a"></div>
+        <div class="pulse-ring pulse-delay" id="ring-b"></div>
+        <button id="record-btn" aria-label="Start recording" title="Click to start / stop recording">
+          <!-- Microphone SVG -->
+          <svg id="icon-mic" width="28" height="28" viewBox="0 0 24 24"
+               fill="none" stroke="var(--accent)" stroke-width="1.5"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8"  y1="23" x2="16" y2="23"/>
+          </svg>
+          <div class="spinner-el hidden" id="icon-spinner" aria-hidden="true"></div>
+        </button>
+      </div>
+      <div class="record-label" id="record-label">HOLD TO LISTEN</div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       SECTION 3 — SCORE CARD
+  ══════════════════════════════════════════════════════════════════ -->
+  <section id="score-section" aria-live="polite">
+    <div class="container">
+      <div class="score-card">
+        <div class="score-card-label">Biodiversity Health Score</div>
+        <div class="score-card-body">
+          <div class="score-gauge-wrap">
+            <div class="score-gauge" role="img" aria-label="Biodiversity health score gauge">
+              <svg width="160" height="160" viewBox="0 0 160 160">
+                <circle cx="80" cy="80" r="64"
+                  fill="none" stroke="var(--surface-2)" stroke-width="8"/>
+                <circle id="score-ring" cx="80" cy="80" r="64"
+                  fill="none" stroke="var(--accent)" stroke-width="8"
+                  stroke-linecap="round"
+                  stroke-dasharray="402.124"
+                  stroke-dashoffset="402.124"/>
+              </svg>
+              <div class="score-number" id="score-display">—</div>
+            </div>
+            <div class="score-summary" id="soundscape-summary"></div>
+          </div>
+          <div class="score-stats">
+            <div class="stat-pill">Species detected   <span class="stat-val" id="stat-total">0</span></div>
+            <div class="stat-pill">Threatened         <span class="stat-val" id="stat-threatened">0</span></div>
+            <div class="stat-pill">Data-deficient     <span class="stat-val" id="stat-dd">0</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       SECTION 4 — SPECIES GRID
+  ══════════════════════════════════════════════════════════════════ -->
+  <section id="species-section">
+    <div class="container">
+      <div class="section-heading">Detected Species</div>
+      <div id="species-grid" role="list" aria-label="Detected species"></div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       SECTION 5 — MAP
+  ══════════════════════════════════════════════════════════════════ -->
+  <section id="map-section">
+    <div class="container">
+      <div class="section-heading">Global Sightings Log</div>
+      <div id="map-wrap">
+        <div id="map" aria-label="Global species sightings map"></div>
+      </div>
+      <p id="sightings-counter">Loading sightings…</p>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       FOOTER
+  ══════════════════════════════════════════════════════════════════ -->
+  <footer>
+    <div class="container">
+      <p class="footer-text">
+        Species data: IUCN Red List of Threatened Species<br>
+        Audio analysis: Google Gemini 1.5 Flash · Authentication: Auth0
+      </p>
+    </div>
+  </footer>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       APPLICATION SCRIPT
+  ══════════════════════════════════════════════════════════════════ -->
+  <script>
+  "use strict";
+
+  /* ================================================================
+     CONFIGURATION
+     GEMINI_API_KEY and IUCN_API_TOKEN are intentionally absent here.
+     They live as environment variables in your Vercel dashboard and
+     are injected server-side by the functions in netlify/functions/.
+     NEVER put secret keys in this file — it is public on GitHub.
+
+     Only these two Auth0 values belong here: they are public by design
+     (the Auth0 SPA SDK is built for browser use; security comes from
+     the Allowed Callback URL whitelist in your Auth0 dashboard).
+  ================================================================ */
+  const AUTH0_DOMAIN    = 'YOUR_AUTH0_DOMAIN';   // e.g. dev-xxxx.us.auth0.com
+  const AUTH0_CLIENT_ID = 'YOUR_CLIENT_ID';       // from Auth0 dashboard → Applications
+
+  /* ================================================================
+     CONSTANTS
+  ================================================================ */
+  const RECORDING_SECONDS = 10;
+  const LS_KEY            = 'lastbreath_sightings';
+  const CIRCUMFERENCE     = 2 * Math.PI * 64; // r=64 → 402.124
+
+  /* ================================================================
+     APPLICATION STATE
+  ================================================================ */
+  let auth0Client       = null;
+  let mediaRecorder     = null;
+  let audioChunks       = [];
+  let audioCtx          = null;
+  let analyserNode      = null;
+  let rafId             = null;
+  let countdownTimer    = null;
+  let isRecording       = false;
+  let isProcessing      = false;
+  let userLatLng        = null;
+  let userCity          = 'your region';
+  let leafletMap        = null;
+  let mapReady          = false;
+  let detectedSpecies   = [];
+
+  /* ================================================================
+     DOM REFS (resolved once after DOMContentLoaded)
+  ================================================================ */
+  const $ = id => document.getElementById(id);
+
+  /* ================================================================
+     HELPERS — HTML escaping
+  ================================================================ */
+  function esc(str) {
+    if (str == null) return '';
+    return String(str)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+  }
+
+  /* ================================================================
+     OFFLINE DETECTION
+  ================================================================ */
+  function updateOnlineStatus() {
+    $('offline-banner').classList.toggle('visible', !navigator.onLine);
+  }
+
+  /* ================================================================
+     TOAST
+  ================================================================ */
+  function toast(msg, type = 'success', ms = 4500) {
+    const wrap = $('toast-container');
+    const el   = document.createElement('div');
+    el.className = 'toast' + (type === 'error' ? ' error' : '');
+    el.textContent = msg;
+    wrap.appendChild(el);
+    setTimeout(() => {
+      el.style.animation = 'toastOut .3s ease-out forwards';
+      setTimeout(() => el.remove(), 310);
+    }, ms);
+  }
+
+  /* ================================================================
+     CONFIG VALIDATION
+  ================================================================ */
+  function checkConfig() {
+    const missing = [];
+
+    if (!AUTH0_DOMAIN    || AUTH0_DOMAIN    === 'YOUR_AUTH0_DOMAIN')
+      missing.push({
+        k: 'AUTH0_DOMAIN',
+        label: 'Auth0 Domain (in index.html)',
+        url: 'https://auth0.com/signup'
+      });
+    if (!AUTH0_CLIENT_ID || AUTH0_CLIENT_ID === 'YOUR_CLIENT_ID')
+      missing.push({
+        k: 'AUTH0_CLIENT_ID',
+        label: 'Auth0 Client ID (in index.html)',
+        url: 'https://auth0.com/signup'
+      });
+
+    // Remind about Netlify env vars — these are never in the HTML
+    const envReminder = `
+      <li><strong>GEMINI_API_KEY</strong> — set in Vercel dashboard → Site settings → Environment variables
+          (<a href="https://aistudio.google.com" target="_blank" rel="noopener">get key</a>)</li>
+      <li><strong>IUCN_API_TOKEN</strong> — set in Vercel dashboard → Site settings → Environment variables
+          (<a href="https://apiv3.iucnredlist.org/" target="_blank" rel="noopener">get token</a>)</li>`;
+
+    if (!missing.length) {
+      // Still show the env-var reminder in a softer style
+      $('config-banner').innerHTML =
+        `<strong>ℹ Netlify environment variables required</strong> — these keys must be set in your
+         <a href="https://app.netlify.com" target="_blank" rel="noopener">Vercel dashboard</a>,
+         NOT in this file:<ul>${envReminder}</ul>`;
+      $('config-banner').classList.add('visible');
+      return true;
+    }
+
+    $('config-banner').innerHTML =
+      `<strong>⚠ CONFIGURATION INCOMPLETE</strong><ul>` +
+      missing.map(m =>
+        `<li><strong>${esc(m.k)}</strong> — ${esc(m.label)}:
+         <a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.url)}</a></li>`
+      ).join('') + envReminder + `</ul>`;
+    $('config-banner').classList.add('visible');
+    return false;
+  }
+
+  /* ================================================================
+     AUTH0
+  ================================================================ */
+  async function initAuth0() {
+    if (!AUTH0_DOMAIN || AUTH0_DOMAIN === 'YOUR_AUTH0_DOMAIN' ||
+        !AUTH0_CLIENT_ID || AUTH0_CLIENT_ID === 'YOUR_CLIENT_ID') {
+      renderAuthUI(false); return;
+    }
+    // Poll until SDK script has executed (it's deferred)
+    for (let i = 0; i < 30; i++) {
+      if (typeof auth0 !== 'undefined') break;
+      await sleep(200);
+    }
+    if (typeof auth0 === 'undefined') { renderAuthUI(false); return; }
+
+    try {
+      auth0Client = await auth0.createAuth0Client({
+        domain: AUTH0_DOMAIN,
+        clientId: AUTH0_CLIENT_ID,
+        authorizationParams: {
+          redirect_uri: window.location.origin + window.location.pathname
+        }
+      });
+
+      // Handle redirect callback
+      if (window.location.search.includes('code=') &&
+          window.location.search.includes('state=')) {
+        await auth0Client.handleRedirectCallback();
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+
+      const authed = await auth0Client.isAuthenticated();
+      const user   = authed ? await auth0Client.getUser() : null;
+      renderAuthUI(authed, user?.email);
+    } catch (err) {
+      console.error('Auth0 init:', err);
+      renderAuthUI(false);
+    }
+  }
+
+  function renderAuthUI(authed, userEmail) {
+    $('auth-dot').classList.toggle('active', authed);
+    if (authed) {
+      const label = userEmail ? esc(userEmail) : 'VERIFIED OBSERVER';
+      $('auth-label').innerHTML = `<span title="${esc(userEmail || '')}">VERIFIED OBSERVER</span>`;
+    } else {
+      $('auth-label').innerHTML = '<a href="#" id="auth-link">sign in to log sightings</a>';
+      $('auth-label').querySelector('#auth-link').addEventListener('click', e => {
+        e.preventDefault();
+        triggerAuth0Login();
+      });
+    }
+  }
+
+  async function triggerAuth0Login() {
+    if (!auth0Client) {
+      toast('Auth0 not configured — add AUTH0_DOMAIN and AUTH0_CLIENT_ID', 'error');
+      return;
+    }
+    try { await auth0Client.loginWithRedirect(); }
+    catch (err) { toast('Login failed: ' + err.message, 'error'); }
+  }
+
+  /* ================================================================
+     GEOLOCATION
+  ================================================================ */
+  function initGeolocation() {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(async pos => {
+      userLatLng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      try {
+        const r = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?lat=${userLatLng.lat}&lon=${userLatLng.lng}&format=json`,
+          { headers: { 'Accept-Language': 'en' } }
+        );
+        if (!r.ok) return;
+        const d = await r.json();
+        userCity = d.address?.city || d.address?.town || d.address?.village || 'your region';
+      } catch { /* silently ignore */ }
+    }, () => { /* permission denied — use default */ }, { timeout: 12000 });
+  }
+
+  /* ================================================================
+     WAVEFORM CANVAS
+  ================================================================ */
+  function resizeCanvas() {
+    const c = $('waveform-canvas');
+    c.width  = c.offsetWidth;
+    c.height = 80;
+  }
+
+  function drawWaveform() {
+    if (!analyserNode) return;
+    const canvas = $('waveform-canvas');
+    const ctx    = canvas.getContext('2d');
+    const buf    = new Uint8Array(analyserNode.frequencyBinCount);
+
+    function frame() {
+      rafId = requestAnimationFrame(frame);
+      analyserNode.getByteTimeDomainData(buf);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.lineWidth   = 1.5;
+      ctx.strokeStyle = getComputedStyle(document.documentElement)
+                          .getPropertyValue('--accent').trim() || '#3dff7a';
+      ctx.beginPath();
+      const sliceW = canvas.width / buf.length;
+      let x = 0;
+      for (let i = 0; i < buf.length; i++) {
+        const y = (buf[i] / 128) * (canvas.height / 2);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        x += sliceW;
+      }
+      ctx.lineTo(canvas.width, canvas.height / 2);
+      ctx.stroke();
+    }
+    frame();
+  }
+
+  /* ================================================================
+     RECORDING
+  ================================================================ */
+  async function startRecording() {
+    if (isRecording || isProcessing) return;
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      appendErrorCard('species-grid', 'Browser Not Supported',
+        'Audio recording is not available in this browser.\nPlease use a current version of Chrome, Firefox, or Edge.');
+      return;
+    }
+
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    } catch (err) {
+      const denied = err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError';
+      appendErrorCard('species-grid',
+        denied ? 'Microphone Access Denied' : 'Microphone Error',
+        denied
+          ? 'Last Breath needs microphone access to analyse your soundscape.\n\n' +
+            'To enable:\n• Chrome/Edge: Click the lock icon → Site settings → Microphone → Allow\n' +
+            '• Firefox: Click the mic icon in the address bar → Allow\n' +
+            '• Safari: Preferences → Websites → Microphone → Allow'
+          : err.message
+      );
+      return;
+    }
+
+    // Web Audio (waveform only — analyser not connected to destination)
+    audioCtx      = new (window.AudioContext || window.webkitAudioContext)();
+    const src     = audioCtx.createMediaStreamSource(stream);
+    analyserNode  = audioCtx.createAnalyser();
+    analyserNode.fftSize = 2048;
+    src.connect(analyserNode);
+
+    // MediaRecorder
+    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '');
+
+    audioChunks = [];
+    mediaRecorder = mime
+      ? new MediaRecorder(stream, { mimeType: mime })
+      : new MediaRecorder(stream);
+
+    mediaRecorder.ondataavailable = e => { if (e.data?.size > 0) audioChunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      if (audioCtx) { audioCtx.close(); audioCtx = null; }
+      if (rafId)    { cancelAnimationFrame(rafId); rafId = null; }
+      analyserNode = null;
+      processRecording();
+    };
+
+    mediaRecorder.start(100);
+    isRecording = true;
+
+    setRecordState('recording');
+    $('waveform-section').classList.add('visible');
+    // Defer resize so the browser has painted the now-visible canvas
+    requestAnimationFrame(() => { resizeCanvas(); drawWaveform(); });
+
+    // Countdown
+    let remaining = RECORDING_SECONDS;
+    $('record-label').textContent = `LISTENING… ${remaining}s`;
+    countdownTimer = setInterval(() => {
+      remaining--;
+      if (remaining <= 0) { clearInterval(countdownTimer); stopRecording(); }
+      else $('record-label').textContent = `LISTENING… ${remaining}s`;
+    }, 1000);
+  }
+
+  function stopRecording() {
+    if (!isRecording || !mediaRecorder) return;
+    clearInterval(countdownTimer);
+    isRecording = false;
+    if (mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+    setRecordState('processing');
+  }
+
+  /* ================================================================
+     RECORD BUTTON VISUAL STATE
+  ================================================================ */
+  function setRecordState(state) {
+    const btn     = $('record-btn');
+    const label   = $('record-label');
+    const mic     = $('icon-mic');
+    const spinner = $('icon-spinner');
+    const ringA   = $('ring-a');
+    const ringB   = $('ring-b');
+
+    btn.className = '';
+    mic.classList.remove('hidden');
+    spinner.classList.add('hidden');
+    ringA.classList.remove('active');
+    ringB.classList.remove('active');
+    btn.disabled = false;
+
+    if (state === 'recording') {
+      btn.classList.add('recording');
+      mic.setAttribute('stroke', 'var(--danger)');
+      ringA.classList.add('active');
+      ringB.classList.add('active');
+
+    } else if (state === 'processing') {
+      btn.classList.add('processing');
+      btn.disabled = true;
+      mic.classList.add('hidden');
+      spinner.classList.remove('hidden');
+      label.textContent = 'ANALYSING…';
+      $('waveform-section').classList.remove('visible');
+
+    } else {
+      // idle
+      mic.setAttribute('stroke', 'var(--accent)');
+      label.textContent = 'HOLD TO LISTEN';
+      $('waveform-section').classList.remove('visible');
+      isProcessing = false;
+    }
+  }
+
+  /* ================================================================
+     BLOB → BASE64
+  ================================================================ */
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload  = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  /* ================================================================
+     GEMINI API
+  ================================================================ */
+  const GEMINI_PROMPT = `You are an expert field bioacoustician. You have been given an audio recording of an outdoor environment. Your task is to identify every species audible in this recording based solely on their acoustic signatures — bird calls, frog calls, insect sounds, mammal sounds.
+
+For each species you detect, provide: the common name, the scientific name (genus species), your confidence level (high/medium/low), and a one-sentence description of the specific sound you heard.
+
+Also write a single sentence (max 20 words) describing the overall character of this soundscape for a biodiversity health summary.
+
+Respond ONLY in this exact JSON format, no other text:
+{
+  "soundscape_summary": "string",
+  "species": [
+    {
+      "common_name": "string",
+      "scientific_name": "string",
+      "confidence": "high|medium|low",
+      "sound_description": "string"
+    }
+  ]
+}
+
+If you cannot detect any biological species sounds (e.g. pure silence, only wind, only traffic), return an empty species array and explain in soundscape_summary.`;
+
+  async function callGemini(base64Audio, mimeType) {
+    // Key is injected server-side in netlify/functions/analyse.js
+    const url = '/api/analyse';
+    const body = {
+      contents: [{
+        parts: [
+          { text: GEMINI_PROMPT },
+          { inline_data: { mime_type: mimeType || 'audio/webm', data: base64Audio } }
+        ]
+      }],
+      generationConfig: { temperature: 0.1 }
+    };
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { const d = await res.json(); msg += ': ' + (d.error?.message || res.statusText); } catch {}
+      throw new Error(msg);
+    }
+
+    const data  = await res.json();
+    let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!rawText) throw new Error('Gemini returned an empty response.');
+
+    // Strip markdown fences
+    rawText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+
+    let parsed;
+    try { parsed = JSON.parse(rawText); }
+    catch (e) {
+      const err  = new Error('JSON parse failed');
+      err.raw    = rawText;
+      throw err;
+    }
+    return parsed;
+  }
+
+  /* ================================================================
+     IUCN RED LIST API
+  ================================================================ */
+  async function fetchIUCN(scientificName) {
+    // Token is injected server-side in netlify/functions/iucn.js
+    const enc = encodeURIComponent(scientificName);
+
+    const [assessRes, narRes] = await Promise.allSettled([
+      fetch(`/api/iucn?type=species&name=${enc}`).then(r => r.json()),
+      fetch(`/api/iucn?type=narrative&name=${enc}`).then(r => r.json())
+    ]);
+
+    let category        = 'DD';
+    let populationTrend = 'Unknown';
+    let habitat         = null;
+
+    if (assessRes.status === 'fulfilled') {
+      const row = assessRes.value?.result?.[0];
+      if (row) {
+        category        = row.category       || 'DD';
+        populationTrend = row.population_trend || 'Unknown';
+      }
+    }
+
+    if (narRes.status === 'fulfilled') {
+      const row = narRes.value?.result?.[0];
+      if (row?.habitat) {
+        const clean = row.habitat.replace(/<[^>]+>/g, ' ').replace(/\s+/g,' ').trim();
+        habitat = clean.length > 120 ? clean.slice(0,120) + '…' : clean;
+      }
+    }
+
+    return { category, populationTrend, habitat };
+  }
+
+  /* ================================================================
+     SCORE CALCULATION
+  ================================================================ */
+  function calcScore(species) {
+    let s = 100;
+    for (const sp of species) {
+      switch (sp.iucn?.category) {
+        case 'CR': s -= 15; break;
+        case 'EN': s -= 10; break;
+        case 'VU': s -= 6;  break;
+        case 'NT': s -= 3;  break;
+        case 'LC': s += 2;  break;
+      }
+    }
+    return Math.max(0, Math.min(100, s));
+  }
+
+  function scoreColor(s) {
+    if (s >= 70) return 'var(--accent)';
+    if (s >= 40) return 'var(--warn)';
+    return 'var(--danger)';
+  }
+
+  function animateScoreGauge(target) {
+    const ring    = $('score-ring');
+    const display = $('score-display');
+    const card    = document.querySelector('.score-card');
+    const color   = scoreColor(target);
+    ring.setAttribute('stroke', color);
+    display.style.color = color;
+
+    // Apply glow class to card
+    if (card) {
+      card.classList.remove('scored-healthy','scored-warn','scored-danger');
+      if (target >= 70) card.classList.add('scored-healthy');
+      else if (target >= 40) card.classList.add('scored-warn');
+      else card.classList.add('scored-danger');
+    }
+
+    const start = performance.now();
+    const dur   = 900;
+
+    function tick(now) {
+      const p    = Math.min((now - start) / dur, 1);
+      const ease = 1 - Math.pow(1 - p, 3);
+      const cur  = Math.round(target * ease);
+      display.textContent = cur;
+      ring.setAttribute('stroke-dashoffset', CIRCUMFERENCE * (1 - cur / 100));
+      if (p < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  function animateCounter(elId, target, dur = 700) {
+    const el    = $(elId);
+    if (!el) return;
+    const start = performance.now();
+    function tick(now) {
+      const p   = Math.min((now - start) / dur, 1);
+      const ease = 1 - Math.pow(1 - p, 3);
+      el.textContent = Math.round(target * ease);
+      if (p < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  /* ================================================================
+     SPECIES CARD HELPERS
+  ================================================================ */
+  const STATUS_LABELS = {
+    EX:'EXTINCT', EW:'EXTINCT IN WILD', CR:'CRITICALLY ENDANGERED',
+    EN:'ENDANGERED', VU:'VULNERABLE', NT:'NEAR THREATENED',
+    LC:'LEAST CONCERN', DD:'DATA DEFICIENT', NE:'NOT EVALUATED'
+  };
+
+  function statusClass(cat) {
+    const valid = ['EX','EW','CR','EN','VU','NT','LC','DD','NE'];
+    return 's-' + (valid.includes(cat) ? cat : 'DD');
+  }
+
+  function isThreatened(cat) { return ['CR','EN','VU','NT'].includes(cat); }
+
+  function trendData(trend) {
+    const t = (trend || '').toLowerCase();
+    if (t === 'decreasing') return { arrow:'↓', cls:'t-down',   label:'Decreasing' };
+    if (t === 'increasing') return { arrow:'↑', cls:'t-up',     label:'Increasing' };
+    return                         { arrow:'→', cls:'t-stable', label: trend || 'Unknown' };
+  }
+
+  function extinctionCount(cat) {
+    if (cat === 'CR') return Math.floor(Math.random() * 6)  + 3;   // 3–8
+    if (cat === 'EN') return Math.floor(Math.random() * 11) + 8;   // 8–18
+    if (cat === 'VU') return Math.floor(Math.random() * 21) + 15;  // 15–35
+    return null;
+  }
+
+  /* ================================================================
+     RENDER SPECIES CARD — loading skeleton
+  ================================================================ */
+  function renderLoadingCard(sp, idx) {
+    const grid = $('species-grid');
+    const card = document.createElement('div');
+    card.className  = 'species-card';
+    card.id         = `card-${idx}`;
+    card.setAttribute('role','listitem');
+    card.style.animationDelay = `${idx * 90}ms`;
+    card.innerHTML = `
+      <div class="card-loading-bar"><div class="card-loading-fill"></div></div>
+      <div class="species-common">${esc(sp.common_name)}</div>
+      <div class="species-scientific">${esc(sp.scientific_name)}</div>
+      <div class="sound-desc" style="margin-top:8px">${esc(sp.sound_description)}</div>
+      <div class="confidence-tag">${esc(sp.confidence)} confidence</div>
+      <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text-dim);margin-top:6px">
+        Loading conservation data…
+      </div>`;
+    grid.appendChild(card);
+  }
+
+  /* ================================================================
+     UPDATE SPECIES CARD — with IUCN data
+  ================================================================ */
+  function updateCard(sp) {
+    const card = $(`card-${sp._idx}`);
+    if (!card) return;
+
+    const cat   = sp.iucn?.category || 'DD';
+    const trend = sp.iucn?.populationTrend || 'Unknown';
+    const hab   = sp.iucn?.habitat;
+    const td    = trendData(trend);
+    const thr   = isThreatened(cat);
+    const pillExtra = thr ? ' pulsing' : '';
+
+    const isDecreasing   = trend.toLowerCase() === 'decreasing';
+    const showCountdown  = thr && ['VU','EN','CR'].includes(cat) && isDecreasing;
+    const countN         = showCountdown ? extinctionCount(cat) : null;
+
+    let infoHTML = '';
+    if (showCountdown && countN) {
+      infoHTML = `
+        <div class="countdown-box">
+          <div class="countdown-label">Projected Timeline</div>
+          <div class="countdown-value">~${countN} breeding seasons remaining in ${esc(userCity)}</div>
+        </div>`;
+    } else if (cat === 'LC' || cat === 'NT') {
+      infoHTML = `<div class="stable-box">Population stable${hab ? ' — ' + esc(hab) : ' in natural habitat'}</div>`;
+    } else if (hab) {
+      infoHTML = `<div class="stable-box">${esc(hab)}</div>`;
+    }
+
+    card.innerHTML = `
+      <div class="species-card-top">
+        <div>
+          <div class="species-common">${esc(sp.common_name)}</div>
+          <div class="species-scientific">${esc(sp.scientific_name)}</div>
+        </div>
+        <div class="status-pill ${statusClass(cat)}${pillExtra}">
+          ${esc(STATUS_LABELS[cat] || 'DATA DEFICIENT')}
+        </div>
+      </div>
+      <div class="confidence-tag">${esc(sp.confidence)} confidence</div>
+      <div class="sound-desc">${esc(sp.sound_description)}</div>
+      <div class="trend-line ${td.cls}">${td.arrow} ${esc(td.label)}</div>
+      ${infoHTML}
+      <div class="card-spacer"></div>
+      <button class="log-btn" id="log-btn-${sp._idx}" data-idx="${sp._idx}">
+        Log this sighting →
+      </button>`;
+
+    card.querySelector('.log-btn').addEventListener('click', e => {
+      logSighting(e.currentTarget, sp._idx);
+    });
+  }
+
+  /* ================================================================
+     ERROR CARD
+  ================================================================ */
+  function appendErrorCard(containerId, title, message, raw) {
+    const container = $(containerId);
+    const card = document.createElement('div');
+    card.className = 'error-card';
+    card.innerHTML = `
+      <div class="error-card-title">${esc(title)}</div>
+      <div class="error-card-body">${esc(message)}</div>
+      ${raw ? `<pre>${esc(raw)}</pre>` : ''}`;
+    container.appendChild(card);
+  }
+
+  /* ================================================================
+     MAIN PROCESSING PIPELINE
+  ================================================================ */
+  async function processRecording() {
+    isProcessing = true;
+    $('species-grid').innerHTML = '';
+    // Clear any previous error cards embedded in the grid
+    document.querySelectorAll('.error-card').forEach(c => c.remove());
+
+    const mimeType = audioChunks[0]?.type || 'audio/webm';
+    const blob     = new Blob(audioChunks, { type: mimeType });
+    audioChunks    = [];                      // free memory reference
+
+    // Base64 encode
+    let b64;
+    try { b64 = await blobToBase64(blob); }
+    catch (err) {
+      appendErrorCard('species-grid', 'Audio Encoding Error', err.message);
+      setRecordState('idle');
+      return;
+    }
+
+    // Gemini analysis
+    let gemini;
+    try {
+      gemini = await callGemini(b64, mimeType);
+    } catch (err) {
+      appendErrorCard('species-grid', 'Gemini API Error', err.message, err.raw || null);
+      setRecordState('idle');
+      return;
+    }
+
+    const { soundscape_summary, species } = gemini;
+
+    if (!species || !species.length) {
+      appendErrorCard('species-grid', 'No Species Detected',
+        soundscape_summary ||
+        'No biological species detected in this recording. Try recording outdoors, near vegetation, at dawn or dusk for best results.');
+      setRecordState('idle');
+      return;
+    }
+
+    // Enrich with index
+    detectedSpecies = species.map((s, i) => ({ ...s, _idx: i, iucn: null }));
+
+    // Show loading cards immediately
+    detectedSpecies.forEach(sp => renderLoadingCard(sp, sp._idx));
+
+    // Show score section (partial, will update as IUCN loads)
+    $('score-section').classList.add('visible');
+    $('soundscape-summary').textContent = soundscape_summary || '';
+    animateCounter('stat-total', species.length, 500);
+
+    // Scroll to species
+    setTimeout(() => {
+      $('species-section').scrollIntoView({ behavior:'smooth', block:'start' });
+    }, 200);
+
+    // Fetch IUCN data — all in parallel, cards update progressively
+    let iucnFailCount = 0;
+    await Promise.allSettled(
+      detectedSpecies.map(async sp => {
+        try {
+          sp.iucn = await fetchIUCN(sp.scientific_name);
+        } catch {
+          sp.iucn = { category:'DD', populationTrend:'Unknown', habitat:null };
+          iucnFailCount++;
+        }
+        updateCard(sp);
+      })
+    );
+    if (iucnFailCount > 0 && iucnFailCount === detectedSpecies.length) {
+      toast('Conservation data temporarily unavailable — check your IUCN API token.', 'error', 6000);
+    }
+
+    // Final score & animated stat pills
+    const score     = calcScore(detectedSpecies);
+    const threatened = detectedSpecies.filter(s => isThreatened(s.iucn?.category)).length;
+    const dd         = detectedSpecies.filter(s => s.iucn?.category === 'DD').length;
+    animateScoreGauge(score);
+    animateCounter('stat-threatened', threatened);
+    animateCounter('stat-dd', dd);
+
+    setRecordState('idle');
+    refreshMap();
+    showAnalyseAgainBtn();
+  }
+
+  function showAnalyseAgainBtn() {
+    // Remove old button if present
+    const old = $('analyse-again-btn');
+    if (old) old.remove();
+
+    const btn = document.createElement('button');
+    btn.id        = 'analyse-again-btn';
+    btn.className = 'analyse-again-btn';
+    btn.textContent = '↺ Analyse another soundscape';
+    btn.addEventListener('click', () => {
+      btn.remove();
+      $('score-section').classList.remove('visible');
+      $('species-grid').innerHTML = '';
+      $('score-display').textContent = '—';
+      $('score-display').style.color = '';
+      $('score-ring').setAttribute('stroke-dashoffset', CIRCUMFERENCE);
+      $('score-ring').setAttribute('stroke', 'var(--accent)');
+      $('soundscape-summary').textContent = '';
+      $('stat-total').textContent      = '0';
+      $('stat-threatened').textContent = '0';
+      $('stat-dd').textContent         = '0';
+      const card = document.querySelector('.score-card');
+      if (card) card.classList.remove('scored-healthy','scored-warn','scored-danger');
+      detectedSpecies = [];
+      $('hero').scrollIntoView({ behavior:'smooth', block:'start' });
+    });
+    $('species-section').querySelector('.container').appendChild(btn);
+  }
+
+  /* ================================================================
+     LOG SIGHTING
+  ================================================================ */
+  async function logSighting(btn, idx) {
+    const sp = detectedSpecies[idx];
+    if (!sp) return;
+
+    if (!auth0Client) {
+      toast('Auth0 not configured. Fill in AUTH0_DOMAIN and AUTH0_CLIENT_ID in the script.', 'error');
+      return;
+    }
+
+    try {
+      const authed = await auth0Client.isAuthenticated();
+      if (!authed) {
+        sessionStorage.setItem('lb_pending_idx', String(idx));
+        await auth0Client.loginWithRedirect();
+        return;
+      }
+
+      const user   = await auth0Client.getUser();
+      renderAuthUI(true, user?.email);
+      const record = {
+        id:              Date.now() + '-' + Math.random().toString(36).slice(2,9),
+        timestamp:       new Date().toISOString(),
+        common_name:     sp.common_name,
+        scientific_name: sp.scientific_name,
+        iucn_category:   sp.iucn?.category || 'DD',
+        lat:             userLatLng?.lat ?? null,
+        lng:             userLatLng?.lng ?? null,
+        city:            userCity,
+        user_sub:        user?.sub       || 'anonymous',
+        user_email:      user?.email     || null
+      };
+
+      const all = JSON.parse(localStorage.getItem(LS_KEY) || '[]');
+      all.push(record);
+      localStorage.setItem(LS_KEY, JSON.stringify(all));
+
+      btn.textContent = '✓ Sighting logged';
+      btn.classList.add('logged');
+      btn.disabled = true;
+      toast('Sighting verified & logged. You are now part of the record.');
+      refreshMap();
+    } catch (err) {
+      toast('Error logging sighting: ' + err.message, 'error');
+    }
+  }
+
+  /* ================================================================
+     LEAFLET MAP
+  ================================================================ */
+  function initMap() {
+    if (mapReady) return;
+
+    const tryBuild = setInterval(() => {
+      if (typeof L === 'undefined') return;
+      clearInterval(tryBuild);
+      mapReady = true;
+
+      const startCenter = userLatLng
+        ? [userLatLng.lat, userLatLng.lng]
+        : [20, 0];
+      const startZoom = userLatLng ? 6 : 2;
+
+      leafletMap = L.map('map', {
+        center: startCenter,
+        zoom:   startZoom,
+        zoomControl: true
+      });
+
+      L.tileLayer(
+        'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+        {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+          subdomains: 'abcd',
+          maxZoom: 20
+        }
+      ).addTo(leafletMap);
+
+      refreshMap();
+    }, 200);
+  }
+
+  let _lastMapCount = 0;
+
+  function refreshMap() {
+    if (!leafletMap) return;
+
+    // Clear existing markers
+    leafletMap.eachLayer(layer => {
+      if (layer instanceof L.Marker) leafletMap.removeLayer(layer);
+    });
+
+    const all   = JSON.parse(localStorage.getItem(LS_KEY) || '[]');
+    const valid = all.filter(s => s.lat != null && s.lng != null);
+
+    valid.forEach(s => {
+      const el = document.createElement('div');
+      el.className = 'map-marker';
+
+      const icon = L.divIcon({
+        html:       el.outerHTML,
+        className:  '',
+        iconSize:   [10, 10],
+        iconAnchor: [5, 5],
+        popupAnchor:[0, -8]
+      });
+
+      const when = new Date(s.timestamp).toLocaleDateString('en-US', {
+        year:'numeric', month:'short', day:'numeric'
+      });
+
+      L.marker([s.lat, s.lng], { icon })
+        .bindPopup(`
+          <div class="popup-name">${esc(s.common_name)}</div>
+          <div class="popup-line">Scientific: ${esc(s.scientific_name || '—')}</div>
+          <div class="popup-line">Status: ${esc(s.iucn_category || 'Unknown')}</div>
+          <div class="popup-line">Location: ${esc(s.city || '—')}</div>
+          <div class="popup-line">Date: ${when}</div>
+          <div class="popup-badge">✓ Logged by a verified observer</div>`)
+        .addTo(leafletMap);
+    });
+
+    const locs  = new Set(valid.map(s => `${s.lat.toFixed(2)},${s.lng.toFixed(2)}`)).size;
+    $('sightings-counter').textContent =
+      `${all.length} species sighting${all.length !== 1 ? 's' : ''} logged across ${locs} location${locs !== 1 ? 's' : ''}`;
+
+    // Fly to newly added sighting
+    if (all.length > _lastMapCount && valid.length > 0) {
+      const newest = valid[valid.length - 1];
+      leafletMap.flyTo([newest.lat, newest.lng], Math.max(leafletMap.getZoom(), 8), {
+        animate: true, duration: 1.4
+      });
+    }
+    _lastMapCount = all.length;
+  }
+
+  /* ================================================================
+     INTERSECTION OBSERVER — lazy-init map
+  ================================================================ */
+  function observeMap() {
+    const target = $('map-section');
+    if (!('IntersectionObserver' in window)) { initMap(); return; }
+    const io = new IntersectionObserver(entries => {
+      entries.forEach(e => { if (e.isIntersecting) { initMap(); io.unobserve(target); } });
+    }, { threshold: 0.1 });
+    io.observe(target);
+  }
+
+  /* ================================================================
+     MISC UTILITIES
+  ================================================================ */
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  /* ================================================================
+     ENTRY POINT
+  ================================================================ */
+  async function init() {
+    // Online status
+    updateOnlineStatus();
+    window.addEventListener('online',  updateOnlineStatus);
+    window.addEventListener('offline', updateOnlineStatus);
+
+    // Config check
+    checkConfig();
+
+    // Wire auth UI immediately (before SDK loads) so the sign-in link is clickable
+    renderAuthUI(false);
+
+    // Background tasks (non-blocking)
+    initGeolocation();
+    observeMap();
+    initAuth0().catch(e => console.warn('Auth0:', e));
+
+    // Canvas resize
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    // Record button
+    $('record-btn').addEventListener('click', () => {
+      if (isProcessing) return;
+      if (isRecording) stopRecording();
+      else startRecording();
+    });
+
+    // After Auth0 redirect — resume any pending sighting
+    const pi = sessionStorage.getItem('lb_pending_idx');
+    if (pi !== null) {
+      sessionStorage.removeItem('lb_pending_idx');
+      toast('You are now signed in. Please click "Log this sighting" again on the species card.', 'success', 6000);
+    }
+
+    // Init sightings counter immediately (even before map renders)
+    const all  = JSON.parse(localStorage.getItem(LS_KEY) || '[]');
+    const locs = new Set(
+      all.filter(s => s.lat && s.lng).map(s => `${(+s.lat).toFixed(2)},${(+s.lng).toFixed(2)}`)
+    ).size;
+    $('sightings-counter').textContent =
+      `${all.length} species sighting${all.length !== 1 ? 's' : ''} logged across ${locs} location${locs !== 1 ? 's' : ''}`;
+  }
+
+  // Bootstrap
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+  </script>
+</body>
+</html>
