@@ -138,20 +138,22 @@
     ================================================================ */
     #auth-status {
       position: fixed;
-      top: 16px; right: 20px;
+      top: 14px; right: 14px;
       z-index: 900;
       display: flex;
       align-items: center;
-      gap: 8px;
-      background: rgba(10,14,11,.85);
+      gap: 7px;
+      background: rgba(10,14,11,.88);
       border: 1px solid var(--border);
       border-radius: 20px;
-      padding: 6px 14px;
+      padding: clamp(4px, 1vw, 6px) clamp(10px, 2.5vw, 14px);
       backdrop-filter: blur(10px);
       font-family: 'DM Mono', monospace;
-      font-size: 11px;
-      letter-spacing: .08em;
+      font-size: clamp(9px, 2vw, 11px);
+      letter-spacing: .06em;
+      max-width: calc(100vw - 28px);
     }
+    #auth-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
     .auth-dot {
       width: 7px; height: 7px;
       border-radius: 50%;
@@ -202,13 +204,13 @@
        SECTION 1 — HERO
     ================================================================ */
     #hero {
-      min-height: 100vh;
+      min-height: 100svh;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       text-align: center;
-      padding: 100px 24px 60px;
+      padding: clamp(64px, 12vw, 100px) clamp(16px, 4vw, 24px) clamp(40px, 8vw, 60px);
       position: relative;
     }
     .version-tag {
@@ -359,7 +361,7 @@
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 32px;
+      padding: clamp(18px, 4vw, 32px);
       transition: border-color .6s, box-shadow .6s;
     }
     .score-card.scored-healthy { border-color: rgba(61,255,122,.3);  box-shadow: 0 0 32px rgba(61,255,122,.07); }
@@ -376,8 +378,8 @@
     .score-card-body {
       display: flex;
       align-items: center;
-      gap: 44px;
-      flex-wrap: wrap;
+      gap: 24px;
+      width: 100%;
     }
     .score-gauge-wrap {
       flex-shrink: 0;
@@ -412,7 +414,7 @@
     }
     .score-stats {
       flex: 1;
-      min-width: 180px;
+      min-width: 0;
       display: flex;
       flex-direction: column;
       gap: 10px;
@@ -470,8 +472,9 @@
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
-      gap: 12px;
+      gap: 10px;
       margin-bottom: 10px;
+      flex-wrap: wrap;
     }
     .species-common {
       font-family: 'DM Serif Display', Georgia, serif;
@@ -707,21 +710,82 @@
     ::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
 
     /* ================================================================
-       RESPONSIVE
+       RESPONSIVE — mobile-first fluid design
     ================================================================ */
-    @media (max-width: 639px) {
-      #hero { padding: 70px 16px 40px; min-height: auto; }
-      .record-btn-container, #record-btn { width: 64px; height: 64px; }
-      #species-grid { grid-template-columns: 1fr; }
-      #map-wrap { height: 280px; }
-      .score-gauge { width: 120px; height: 120px; }
-      .score-number { font-size: 36px; }
-      .score-card  { padding: 20px; }
-      .score-card-body { flex-direction: column; align-items: center; gap: 24px; }
-      .score-summary { max-width: 260px; }
+
+    /* Fluid container padding */
+    .container { padding: 0 clamp(16px, 4vw, 24px); }
+
+    /* Score gauge — fluid size so it never overflows */
+    .score-gauge {
+      width:  clamp(110px, 28vw, 160px);
+      height: clamp(110px, 28vw, 160px);
     }
+    .score-gauge svg { width: 100%; height: 100%; }
+    .score-number    { font-size: clamp(26px, 5vw, 48px); }
+    .score-summary   { font-size: clamp(12px, 2.5vw, 14px); }
+
+    /* Score card body always stacks cleanly */
+    .score-card-body {
+      flex-direction: column;
+      align-items: center;
+      gap: 24px;
+    }
+    /* On tablets and up: go back to row */
+    @media (min-width: 640px) {
+      .score-card-body {
+        flex-direction: row;
+        align-items: flex-start;
+        gap: 40px;
+      }
+      .score-summary { max-width: 200px; }
+    }
+
+    /* Stat pills — full-width on small screens */
+    .score-stats { width: 100%; }
+    .stat-pill   { white-space: normal; flex-wrap: wrap; }
+
+    /* ── Tiny phones (< 400px) ─────────────────────────────────── */
+    @media (max-width: 399px) {
+      #hero { padding: 56px 16px 32px; min-height: auto; }
+      .app-title { font-size: clamp(2.2rem, 14vw, 3rem); }
+      .record-btn-container, #record-btn { width: 60px; height: 60px; }
+      .pulse-ring { inset: -4px; }
+      #score-section { padding: 28px 16px 0; }
+      .score-card  { padding: 16px; }
+      #species-section { padding: 28px 16px 12px; }
+      #map-section { padding: 28px 16px 32px; }
+      #map-wrap { height: 240px; }
+      #species-grid { grid-template-columns: 1fr; gap: 12px; }
+      .species-card { padding: 14px; }
+      .species-common { font-size: 17px; }
+      .status-pill { font-size: 9px; padding: 2px 6px; }
+      #auth-status { padding: 5px 10px; font-size: 10px; top: 10px; right: 10px; }
+    }
+
+    /* ── Mobile (400px – 639px) ────────────────────────────────── */
+    @media (min-width: 400px) and (max-width: 639px) {
+      #hero { padding: 70px 20px 40px; min-height: auto; }
+      .record-btn-container, #record-btn { width: 64px; height: 64px; }
+      #score-section { padding: 32px 20px 0; }
+      .score-card  { padding: 20px; }
+      #species-section { padding: 32px 20px 16px; }
+      #map-section { padding: 32px 20px 36px; }
+      #map-wrap { height: 280px; }
+      #species-grid { grid-template-columns: 1fr; gap: 14px; }
+      .species-card { padding: 16px; }
+    }
+
+    /* ── Tablet (640px – 1023px) ───────────────────────────────── */
     @media (min-width: 640px) and (max-width: 1023px) {
-      #species-grid { grid-template-columns: repeat(2,1fr); }
+      #species-grid { grid-template-columns: repeat(2, 1fr); }
+      #map-wrap { height: 340px; }
+    }
+
+    /* ── Desktop (1024px +) ────────────────────────────────────── */
+    @media (min-width: 1024px) {
+      #hero { min-height: 100vh; }
+      #species-grid { grid-template-columns: repeat(2, 1fr); }
     }
   </style>
 </head>
@@ -793,7 +857,7 @@
         <div class="score-card-body">
           <div class="score-gauge-wrap">
             <div class="score-gauge" role="img" aria-label="Biodiversity health score gauge">
-              <svg width="160" height="160" viewBox="0 0 160 160">
+              <svg viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
                 <circle cx="80" cy="80" r="64"
                   fill="none" stroke="var(--surface-2)" stroke-width="8"/>
                 <circle id="score-ring" cx="80" cy="80" r="64"
