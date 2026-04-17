@@ -90,8 +90,8 @@ Microphone input (10s)
 ### 1. Clone and deploy
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/last-breath.git
-cd last-breath
+git clone https://github.com/Boweii22/LastBreadth
+cd lastbreath
 ```
 
 Deploy to Vercel:
@@ -192,6 +192,37 @@ last-breath/
 - [ ] Exportable PDF field report for each recording session
 - [ ] PWA support for offline-first mobile use
 - [ ] Community species verification (flag uncertain identifications)
+
+---
+
+## IUCN Conservation Status Codes
+
+Every detected species is assigned a status by the IUCN Red List. Here is what each code means:
+
+| Code | Full Name | What it means |
+|------|-----------|---------------|
+| **EX** | Extinct | Last individual has died. Gone forever. |
+| **EW** | Extinct in the Wild | Only survives in captivity or cultivation. Functionally gone from nature. |
+| **CR** | Critically Endangered | Extremely high risk of extinction in the wild. One bad event away. |
+| **EN** | Endangered | Very high risk of extinction. Population declining severely. |
+| **VU** | Vulnerable | High risk of extinction if circumstances don't change. |
+| **NT** | Near Threatened | Not yet at risk but being watched closely. Could worsen soon. |
+| **LC** | Least Concern | Population stable and widespread. No immediate threat. |
+| **DD** | Data Deficient | Not enough information to make an assessment. The species exists but hasn't been studied enough to assign a threat level. |
+| **NE** | Not Evaluated | Never been assessed by the IUCN at all. |
+
+### How status affects the biodiversity score
+
+| Status | Score impact |
+|--------|-------------|
+| CR | −15 |
+| EN | −10 |
+| VU | −6 |
+| NT | −3 |
+| LC | +2 |
+| DD / NE | 0 |
+
+CR, EN, and VU also trigger the extinction countdown shown on each species card. LC is the only status that adds to the score — hearing many LC species indicates a healthy, functioning ecosystem. DD does not mean safe; it means unknown.
 
 ---
 
