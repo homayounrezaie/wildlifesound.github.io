@@ -1103,73 +1103,6 @@
     }
     .detail-wiki-link:hover { opacity: 1; color: var(--accent); }
 
-    .xeno-section {
-      margin-top: 18px;
-      display: grid;
-      gap: 10px;
-    }
-    .xeno-heading {
-      font: 800 10px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-      letter-spacing: .12em;
-      text-transform: uppercase;
-      color: var(--text-muted);
-    }
-    .xeno-item {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 9px;
-      padding: 12px;
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      background: var(--surface-2);
-    }
-    .xeno-audio {
-      width: 100%;
-      height: 34px;
-    }
-    .xeno-meta {
-      display: grid;
-      gap: 3px;
-      min-width: 0;
-    }
-    .xeno-title {
-      color: var(--text);
-      font: 760 13px/1.25 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-      text-transform: capitalize;
-    }
-    .xeno-title span {
-      color: var(--accent);
-      font-size: 11px;
-      margin-left: 5px;
-    }
-    .xeno-sub,
-    .xeno-credit {
-      color: var(--text-muted);
-      font: 600 11px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-      overflow-wrap: anywhere;
-    }
-    .xeno-sono {
-      width: 100%;
-      max-height: 86px;
-      object-fit: cover;
-      border-radius: 9px;
-      border: 1px solid var(--border);
-      background: var(--bg);
-    }
-    .xeno-links {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-    .xeno-links a {
-      color: var(--accent);
-      text-decoration: none;
-      font: 800 10px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-      letter-spacing: .06em;
-      text-transform: uppercase;
-    }
-    .xeno-links a:hover { text-decoration: underline; }
-
     /* ================================================================
        SCROLLBAR
     ================================================================ */
@@ -2031,22 +1964,12 @@ body {
   border: 1px solid rgba(91,183,217,.22);
 }
 
-.source-badge--xeno {
-  color: #8fd7b5;
-  background: rgba(74,191,132,.12);
-  border: 1px solid rgba(74,191,132,.22);
-}
-
 :root.light .source-badge--gemini {
   color: #a86518;
 }
 
 :root.light .source-badge--birdnet {
   color: #1a7c9b;
-}
-
-:root.light .source-badge--xeno {
-  color: #277548;
 }
 
 .live-empty {
@@ -2416,10 +2339,6 @@ body {
   border-left: 3px solid #f5a623;
 }
 
-.model-section--xeno {
-  border-left: 3px solid #7c6cff;
-}
-
 .model-section-header {
   display: flex;
   align-items: center;
@@ -2526,11 +2445,6 @@ body {
   color: #f5a623;
 }
 
-.model-section--xeno .model-section-icon {
-  background: rgba(124,108,255,.12);
-  color: #8f83ff;
-}
-
 .model-section-icon svg {
   width: 16px;
   height: 16px;
@@ -2551,10 +2465,6 @@ body {
 
 .model-section--gemini .model-section-label {
   color: #f5a623;
-}
-
-.model-section--xeno .model-section-label {
-  color: #8f83ff;
 }
 
 .model-section-desc {
@@ -2584,30 +2494,6 @@ body {
 .model-section--gemini .model-section-count {
   background: rgba(245,166,35,.1);
   color: #f5a623;
-}
-
-.model-section--xeno .model-section-count {
-  background: rgba(124,108,255,.1);
-  color: #8f83ff;
-}
-
-.xeno-reference-card {
-  width: 100%;
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  border-radius: 0;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  text-align: left;
-  font: inherit;
-}
-
-.xeno-card-meta {
-  margin-top: 5px;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 650;
 }
 
 .model-section-list .species-card:first-child {
@@ -2665,26 +2551,13 @@ body {
   border-left-color: #d4820a;
 }
 
-:root.light .model-section--xeno {
-  border-left-color: #5b4be8;
-}
-
 :root.light .model-section--gemini .model-section-icon {
   background: rgba(212,130,10,.1);
   color: #d4820a;
 }
 
-:root.light .model-section--xeno .model-section-icon {
-  background: rgba(91,75,232,.1);
-  color: #5b4be8;
-}
-
 :root.light .model-section--gemini .model-section-label {
   color: #d4820a;
-}
-
-:root.light .model-section--xeno .model-section-label {
-  color: #5b4be8;
 }
 
 :root.light .model-section--gemini .model-section-count {
@@ -2692,10 +2565,6 @@ body {
   color: #d4820a;
 }
 
-:root.light .model-section--xeno .model-section-count {
-  background: rgba(91,75,232,.1);
-  color: #5b4be8;
-}
 
 /* Final cascade guard: keep the page compact after results. */
 #hero,

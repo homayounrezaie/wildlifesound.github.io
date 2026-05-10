@@ -31,8 +31,11 @@
   let replayAudio       = null;
   let replayObjectURL   = null;
   let lastSignalUpdate  = 0;
+  let birdNetWorkerPromise = null;
+  let birdNetPredictionId = 0;
 
-  // Server-side API routes are required because model/API keys must not live in browser code.
+  // Gemini uses server-side API routes because API keys must not live in browser code.
+  // BirdNET runs locally in the browser with TensorFlow.js.
   const HAS_LOCAL_API = window.location.protocol.startsWith('http') &&
     ['localhost', '127.0.0.1'].includes(window.location.hostname);
   const API_BASE = (window.WILDLIFE_API_BASE || '').replace(/\/$/, '');
@@ -259,7 +262,7 @@
   }
 
   function isNonBlockingModelError(model, message) {
-    return /^BirdNET\//.test(model) && /unavailable on hugging face/i.test(message || '');
+    return model === 'BirdNET' && /no confident/i.test(message || '');
   }
 
   function blockingModelFailures() {
@@ -406,13 +409,13 @@
       if (liveResultsMap.size === 0) {
         const failures = blockingModelFailures();
         const failureText = failures.map(([model, msg]) => `${model}: ${msg}`).join('\n');
-        const onlyUnavailableBirdnet = liveModelErrors.size > 0 && failures.length === 0;
+        const onlyBirdnetNoMatch = liveModelErrors.size > 0 && failures.length === 0;
         const title = failureText
           ? (failureText.toLowerCase().includes('overload') || failureText.includes('503') ? 'Gemini Busy' : 'Analysis Failed')
           : 'No Species Detected';
         const message = failureText ||
-          (onlyUnavailableBirdnet
-            ? 'BirdNET is currently unavailable on Hugging Face. Try Gemini again, or upload a clearer clip.'
+          (onlyBirdnetNoMatch
+            ? 'BirdNET did not return a confident bird match. Gemini may still identify non-bird wildlife.'
             : 'No biological species detected. Try recording outdoors near vegetation at dawn or dusk.');
         appendErrorCard('species-grid', title, message);
         renderLiveDetections('empty');
@@ -428,7 +431,6 @@
           updateCard(sp);
           renderLiveDetections('results', detectedSpecies);
         }));
-        showAnalyseAgainBtn();
       }
 
       setWorkflowStep(detectedSpecies.length > 0 ? 2 : -1);
@@ -549,15 +551,14 @@
           const results = result?.results || [];
           const species = birdnetToSpecies(results);
           for (const modelResult of results) {
-            if (modelResult.unavailable) {
-              liveModelErrors.set(modelResult.model, 'Unavailable on Hugging Face');
-            } else if (modelResult.error && !(modelResult.detections || []).length) {
+            if (modelResult.error && !(modelResult.detections || []).length) {
               liveModelErrors.set(modelResult.model, modelResult.error);
             } else {
               liveModelErrors.delete(modelResult.model);
             }
           }
           if (species.length) liveModelErrors.delete('BirdNET');
+          else liveModelErrors.set('BirdNET', 'No confident bird match yet');
           mergeSpecies(species);
         })
         .catch(err => {
@@ -591,7 +592,7 @@
   ================================================================ */
   const LIVE_MODEL_GROUPS = [
     ...GEMINI_MODEL_GROUPS.map(group => ({ keys: [group.key], label: group.key, type: 'gemini' })),
-    { keys: ['BirdNET/AST', 'BirdNET/W2V', 'DBD-research-group/AST-BirdSet-XCL', 'dima806/bird_sounds_classification'], label: 'BirdNET', type: 'birdnet' },
+    { keys: ['BirdNET'], label: 'BirdNET', type: 'birdnet' },
   ];
 
   function startLivePanel() {
@@ -864,40 +865,148 @@ If no biological species detected, return empty species array.`;
   }
 
   /* ================================================================
-     BIRDNET — multiple HF models in parallel
-     Returns { results: [{ model, detections: [{label, score, source}] }] }
-     Each detection has a raw label (eBird code or common name) and score (0-100).
-     Gemini will resolve labels to proper common/scientific names.
+     BIRDNET — official browser model
+     Runs locally in a Web Worker using TensorFlow.js and BirdNET assets.
   ================================================================ */
-  async function callBirdNet(base64Audio, mimeType) {
-    const post = () => fetch(apiUrl('/api/birdnet'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ audio: base64Audio, mimeType }),
+  async function getBirdNetWorker() {
+    if (birdNetWorkerPromise) return birdNetWorkerPromise;
+
+    birdNetWorkerPromise = new Promise((resolve, reject) => {
+      if (!window.Worker) {
+        reject(new Error('BirdNET needs browser Web Worker support.'));
+        return;
+      }
+
+      const workerUrl = new URL('assets/birdnet-worker.js', window.location.href);
+      workerUrl.searchParams.set('root', 'https://birdnet.cornell.edu/models');
+      workerUrl.searchParams.set('tf', 'https://birdnet.cornell.edu/js/tfjs-4.14.0.min.js');
+      workerUrl.searchParams.set('lang', 'en_us');
+
+      const worker = new Worker(workerUrl.toString());
+      const timeout = setTimeout(() => {
+        worker.terminate();
+        birdNetWorkerPromise = null;
+        reject(new Error('BirdNET model load timed out.'));
+      }, 60_000);
+
+      worker.addEventListener('message', event => {
+        if (event.data?.message === 'loaded') {
+          clearTimeout(timeout);
+          resolve(worker);
+        }
+      });
+      worker.addEventListener('error', event => {
+        clearTimeout(timeout);
+        birdNetWorkerPromise = null;
+        reject(new Error(event.message || 'BirdNET model failed to load.'));
+      }, { once: true });
     });
 
-    let res = await post();
-    if (res.status === 503) {
-      const d = await res.json().catch(() => ({}));
-      await new Promise(r => setTimeout(r, Math.min((d.retry_after || 20) * 1000, 30_000)));
-      res = await post();
-    }
-
-    if (!res.ok) throw new Error(`BirdNET HTTP ${res.status}`);
-    return res.json().catch(() => ({ results: [] }));
+    return birdNetWorkerPromise;
   }
 
-  /* Format a raw BirdNet label into a readable display name.
-     W2V returns names like "Mallard_Duck" → "Mallard Duck"
-     AST returns eBird codes like "mallar3" → keep as-is (resolved later via Wikipedia) */
-  function formatBirdLabel(label) {
-    if (!label) return 'Unknown';
-    // Contains underscore or space → readable name, just clean it up
-    if (/[_\s]/.test(label)) {
-      return label.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim();
+  function base64ToArrayBuffer(base64Audio) {
+    const binary = atob(base64Audio);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes.buffer;
+  }
+
+  async function decodeAudioTo48k(base64Audio) {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx || !window.OfflineAudioContext) {
+      throw new Error('BirdNET needs Web Audio support.');
     }
-    // Short alphanumeric eBird code (e.g. "mallar3") — title-case without digits
-    return label.replace(/\d+$/, '').replace(/^./, c => c.toUpperCase());
+
+    const ctx = new AudioCtx();
+    const audioBuffer = await ctx.decodeAudioData(base64ToArrayBuffer(base64Audio).slice(0));
+    if (ctx.state !== 'closed') await ctx.close().catch(() => {});
+
+    const channels = audioBuffer.numberOfChannels;
+    const sourceLength = audioBuffer.length;
+    const mono = new Float32Array(sourceLength);
+    for (let c = 0; c < channels; c++) {
+      const data = audioBuffer.getChannelData(c);
+      for (let i = 0; i < sourceLength; i++) mono[i] += data[i] / channels;
+    }
+
+    if (audioBuffer.sampleRate === 48000) return mono;
+
+    const targetLength = Math.max(1, Math.round(sourceLength * 48000 / audioBuffer.sampleRate));
+    const offline = new OfflineAudioContext(1, targetLength, 48000);
+    const buffer = offline.createBuffer(1, sourceLength, audioBuffer.sampleRate);
+    buffer.copyToChannel(mono, 0);
+    const source = offline.createBufferSource();
+    source.buffer = buffer;
+    source.connect(offline.destination);
+    source.start(0);
+    const rendered = await offline.startRendering();
+    return new Float32Array(rendered.getChannelData(0));
+  }
+
+  async function callBirdNet(base64Audio) {
+    const [worker, pcmAudio] = await Promise.all([
+      getBirdNetWorker(),
+      decodeAudioTo48k(base64Audio),
+    ]);
+
+    const id = ++birdNetPredictionId;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error('BirdNET analysis timed out.'));
+      }, 45_000);
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        worker.removeEventListener('message', onMessage);
+        worker.removeEventListener('error', onError);
+      };
+
+      const onError = event => {
+        cleanup();
+        reject(new Error(event.message || 'BirdNET analysis failed.'));
+      };
+
+      const onMessage = event => {
+        const data = event.data || {};
+        if (data.message !== 'pooled') return;
+        cleanup();
+
+        const detections = (data.pooled || [])
+          .filter(item => Number(item.confidence) >= 0.10)
+          .sort((a, b) => b.confidence - a.confidence)
+          .slice(0, 8)
+          .map(item => ({
+            label: `${item.sciName || ''}_${item.nameI18n || item.name || ''}`,
+            commonName: item.nameI18n || item.name || '',
+            scientificName: item.sciName || '',
+            score: Math.round(Number(item.confidence) * 100),
+            source: 'BirdNET',
+          }));
+
+        resolve({ results: [{ model: 'BirdNET', detections, predictionId: id }] });
+      };
+
+      worker.addEventListener('message', onMessage);
+      worker.addEventListener('error', onError);
+      worker.postMessage({ message: 'predict', pcmAudio, overlapSec: 1.5 }, [pcmAudio.buffer]);
+    });
+  }
+
+  function parseBirdNetLabel(det) {
+    if (det.commonName || det.scientificName) {
+      return {
+        common: det.commonName || det.label || 'Unknown bird',
+        scientific: det.scientificName || '',
+      };
+    }
+
+    const [scientific, common] = String(det.label || '').split('_');
+    return {
+      common: common || String(det.label || 'Unknown bird').replace(/_/g, ' '),
+      scientific: common ? scientific : '',
+    };
   }
 
   /* Convert BirdNet raw detections directly into species objects, tagged by model. */
@@ -905,13 +1014,14 @@ If no biological species detected, return empty species array.`;
     const out = [];
     for (const result of birdnetResults) {
       for (const det of (result.detections || [])) {
+        const label = parseBirdNetLabel(det);
         out.push({
-          common_name:      formatBirdLabel(det.label),
-          scientific_name:  '',           // filled in later via Wikipedia lookup
+          common_name:      label.common,
+          scientific_name:  label.scientific,
           confidence:       det.score >= 70 ? 'high' : det.score >= 40 ? 'medium' : 'low',
           probability_score: det.score,
           sound_description: '',
-          _raw_label:       det.label,   // keep original for Wikipedia search
+          _raw_label:       det.label,
           _detected_by:     result.model,
           _source:          'birdnet',
         });
@@ -958,56 +1068,9 @@ If no biological species detected, return empty species array.`;
     }
   }
 
-  async function fetchXenoRecordings(scientificName, commonName) {
-    const params = new URLSearchParams();
-    if (scientificName) params.set('scientific', scientificName);
-    if (commonName) params.set('common', commonName);
-    if (!params.toString()) return [];
-
-    const res = await fetch(apiUrl(`/api/xeno?${params.toString()}`));
-    if (!res.ok) return [];
-    const data = await res.json().catch(() => ({}));
-    return Array.isArray(data.recordings) ? data.recordings : [];
-  }
-
   async function enrichSpeciesReference(sp) {
-    const [image, recordings] = await Promise.all([
-      fetchSpeciesImage(sp.scientific_name, sp._raw_label || sp.common_name).catch(() => null),
-      fetchXenoRecordings(sp.scientific_name, sp.common_name).catch(() => []),
-    ]);
+    const image = await fetchSpeciesImage(sp.scientific_name, sp._raw_label || sp.common_name).catch(() => null);
     if (image) sp.image = image;
-    sp.xenoRecordings = recordings;
-  }
-
-  function renderXenoSummary(sp) {
-    const count = sp.xenoRecordings?.length || 0;
-    if (!count) return '';
-    return `<span class="source-badge source-badge--xeno">XC ${count}</span>`;
-  }
-
-  function renderXenoDetail(sp) {
-    const recordings = sp.xenoRecordings || [];
-    if (!recordings.length) return '';
-
-    const rows = recordings.map(rec => `
-      <div class="xeno-item">
-        <audio class="xeno-audio" controls preload="none" src="${esc(rec.file)}"></audio>
-        <div class="xeno-meta">
-          <div class="xeno-title">${esc(rec.type || 'reference sound')} ${rec.quality ? `<span>Quality ${esc(rec.quality)}</span>` : ''}</div>
-          <div class="xeno-sub">${esc([rec.country, rec.location].filter(Boolean).join(' - '))}</div>
-          <div class="xeno-credit">Recorded by ${esc(rec.recordist || 'Xeno-canto contributor')}</div>
-        </div>
-        ${rec.sonogram ? `<img class="xeno-sono" src="${esc(rec.sonogram)}" alt="Xeno-canto sonogram">` : ''}
-        <div class="xeno-links">
-          ${rec.url ? `<a href="${esc(rec.url)}" target="_blank" rel="noopener noreferrer">Xeno-canto</a>` : ''}
-          ${rec.license ? `<a href="${esc(rec.license)}" target="_blank" rel="noopener noreferrer">License</a>` : ''}
-        </div>
-      </div>`).join('');
-
-    return `<div class="xeno-section">
-      <div class="xeno-heading">Reference sounds</div>
-      ${rows}
-    </div>`;
   }
 
   const BIRD_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
@@ -1092,7 +1155,6 @@ If no biological species detected, return empty species array.`;
         <div class="species-badges">
           <span class="type-badge">${esc(type)}</span>
           ${sourceBadge}
-          ${renderXenoSummary(sp)}
         </div>
         <div class="prob-bar-wrap">
           <div class="prob-bar-track"><div class="prob-bar-fill ${cls}" style="width:0%"></div></div>
@@ -1414,18 +1476,16 @@ If no biological species detected, return empty species array.`;
       $('species-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 200);
 
-    // Fetch Wikipedia photos and Xeno-canto reference sounds.
+    // Fetch Wikipedia photos.
     await Promise.allSettled(
       detectedSpecies.map(async sp => {
         await enrichSpeciesReference(sp);
         updateCard(sp);
-        renderXenoResultsSection();
         renderLiveDetections('results', detectedSpecies);
       })
     );
 
     setRecordState('idle');
-    showAnalyseAgainBtn();
   }
 
   /* ================================================================
@@ -1440,19 +1500,13 @@ If no biological species detected, return empty species array.`;
       icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
     })),
     {
-      keys:  ['BirdNET/AST', 'BirdNET/W2V', 'DBD-research-group/AST-BirdSet-XCL', 'dima806/bird_sounds_classification'],
+      keys:  ['BirdNET'],
       label: 'BirdNET',
-      desc:  'Bird sound model via Hugging Face',
+      desc:  'Local browser model',
       type:  'birdnet',
       icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 6c0 0-4.5 1.5-7 2L12 4l-2 2-4-1s2 4 4 5H4l2 3h14c2-1 3-3 2-7z"/></svg>`,
     },
   ];
-  const XENO_GROUP = {
-    label: 'Xeno-canto',
-    desc:  'Verified reference recordings',
-    type:  'xeno',
-    icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10v4"/><path d="M7 6v12"/><path d="M11 3v18"/><path d="M15 7v10"/><path d="M19 11v2"/></svg>`,
-  };
 
   function renderSpeciesGrid(species) {
     const grid = $('species-grid');
@@ -1506,86 +1560,6 @@ If no biological species detected, return empty species array.`;
       const list = section.querySelector('.model-section-list');
       for (const sp of unmatched) renderLoadingCard(sp, sp._idx, list);
     }
-
-    renderXenoResultsSection(grid, species);
-  }
-
-  function renderXenoResultsSection(grid = $('species-grid'), species = detectedSpecies) {
-    if (!grid) return;
-    grid.querySelector('[data-model-group="xeno"]')?.remove();
-
-    const items = species.filter(sp => (sp.xenoRecordings || []).length);
-    const section = document.createElement('div');
-    section.className = 'model-section model-section--xeno';
-    section.dataset.modelGroup = 'xeno';
-    section.innerHTML = `
-      <div class="model-section-header">
-        <div class="model-section-meta">
-          <span class="model-section-icon">${XENO_GROUP.icon}</span>
-          <div>
-            <div class="model-section-label">${XENO_GROUP.label}</div>
-            <div class="model-section-desc">${XENO_GROUP.desc}</div>
-          </div>
-        </div>
-        <span class="model-section-count">${items.length} species</span>
-      </div>
-      <div class="model-section-list"></div>`;
-    grid.appendChild(section);
-
-    const list = section.querySelector('.model-section-list');
-    if (!items.length) {
-      list.innerHTML = '<div class="model-empty">Reference sounds appear here after species are matched</div>';
-      return;
-    }
-
-    for (const sp of items) renderXenoReferenceCard(sp, list);
-  }
-
-  function renderXenoReferenceCard(sp, list) {
-    const rec = sp.xenoRecordings?.[0];
-    const card = document.createElement('button');
-    card.type = 'button';
-    card.className = 'species-card xeno-reference-card';
-    card.innerHTML = `
-      ${sp.image?.src
-        ? `<img class="species-row-photo" src="${esc(sp.image.src)}" alt="${esc(sp.common_name)}">`
-        : `<div class="species-row-photo-placeholder">${BIRD_ICON}</div>`}
-      <div class="species-row-body">
-        <div class="species-row-name">${esc(sp.common_name)}</div>
-        <div class="species-row-sci">${esc(sp.scientific_name || rec?.scientificName || '')}</div>
-        <div class="species-badges">
-          <span class="source-badge source-badge--xeno">${esc((sp.xenoRecordings || []).length)} XC sounds</span>
-          ${rec?.quality ? `<span class="type-badge">Quality ${esc(rec.quality)}</span>` : ''}
-        </div>
-        <div class="xeno-card-meta">${esc([rec?.type || 'reference sound', rec?.country].filter(Boolean).join(' - '))}</div>
-      </div>
-      <div class="species-row-right">
-        <svg class="species-row-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-      </div>`;
-    card.addEventListener('click', () => openDetailPanel(sp));
-    list.appendChild(card);
-  }
-
-  function showAnalyseAgainBtn() {
-    // Remove old button if present
-    const old = $('analyse-again-btn');
-    if (old) old.remove();
-
-    const btn = document.createElement('button');
-    btn.id        = 'analyse-again-btn';
-    btn.className = 'analyse-again-btn sticky-record-again';
-    btn.textContent = 'Record Again';
-    btn.addEventListener('click', () => {
-      btn.remove();
-      $('species-grid').innerHTML = '';
-      $('live-panel')?.classList.add('hidden');
-      liveResultsMap.clear();
-      detectedSpecies = [];
-      setPanelStatus('Ready', 'ready');
-      renderLiveDetections('idle');
-      $('hero').scrollIntoView({ behavior:'smooth', block:'start' });
-    });
-    $('species-section').querySelector('.container').appendChild(btn);
   }
 
   /* ================================================================
@@ -1632,7 +1606,6 @@ If no biological species detected, return empty species array.`;
         </div>
 
         ${sp.sound_description ? `<div class="detail-desc">${esc(sp.sound_description)}</div>` : ''}
-        ${renderXenoDetail(sp)}
         ${wikiLink}
       </div>`;
 
