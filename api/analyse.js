@@ -2,10 +2,10 @@
 // Tries multiple models and retries on 429/503 (overload/rate-limit).
 
 const MODELS = [
-  'gemini-2.5-flash-lite',
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
-  'gemini-2.0-flash-lite',
+  { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
+  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+  { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+  { id: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite' },
 ];
 const MAX_RETRIES = 3;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -24,9 +24,8 @@ export default async function handler(req, res) {
     });
   }
 
-  // Try each model; retry within each model on 429/503
-  for (const model of MODELS) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+  const runModel = async (model) => {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model.id}:generateContent?key=${key}`;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       if (attempt > 0) await sleep(2 ** attempt * 1000); // 2s then 4s
@@ -44,7 +43,7 @@ export default async function handler(req, res) {
 
       if (upstream.ok) {
         const data = await upstream.json();
-        return res.status(200).json(data);
+        return { ok: true, model: model.id, label: model.label, data };
       }
 
       // Overloaded or rate limited — retry same model
@@ -56,6 +55,21 @@ export default async function handler(req, res) {
       // 404 = model deprecated, any other error — skip to next model
       break;
     }
+    return { ok: false, model: model.id, label: model.label };
+  };
+
+  const results = await Promise.all(MODELS.map(runModel));
+  const successful = results.filter(r => r.ok);
+  if (successful.length) {
+    const primary = successful[0].data;
+    return res.status(200).json({
+      ...primary,
+      _modelRuns: successful.map(r => ({
+        model: r.model,
+        label: r.label,
+        response: r.data
+      }))
+    });
   }
 
   // Every model and every retry failed

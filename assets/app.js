@@ -10,6 +10,13 @@
      CONSTANTS
   ================================================================ */
   const MAX_RECORDING_SECONDS = 60;
+  const GEMINI_MODEL_GROUPS = [
+    { key: 'Gemini 2.5 Flash Lite', desc: 'Fast Gemini wildlife detector' },
+    { key: 'Gemini 2.5 Flash', desc: 'Higher-capacity Gemini detector' },
+    { key: 'Gemini 2.0 Flash', desc: 'Balanced Gemini detector' },
+    { key: 'Gemini 2.0 Flash Lite', desc: 'Fallback Gemini detector' },
+    { key: 'Gemini AI', desc: 'Gemini wildlife detector' },
+  ];
 
   /* ================================================================
      APPLICATION STATE
@@ -546,7 +553,7 @@
           liveModelErrors.delete('Gemini AI');
           const geminiSpecies = (result?.species || []).map(sp => ({
             ...sp,
-            _detected_by: 'Gemini',
+            _detected_by: sp._modelLabel || 'Gemini AI',
             _source: 'gemini',
           }));
           mergeSpecies(geminiSpecies);
@@ -566,7 +573,7 @@
      LIVE PANEL
   ================================================================ */
   const LIVE_MODEL_GROUPS = [
-    { keys: ['Gemini'], label: 'Gemini AI', type: 'gemini' },
+    ...GEMINI_MODEL_GROUPS.map(group => ({ keys: [group.key], label: group.key, type: 'gemini' })),
   ];
 
   function startLivePanel() {
@@ -608,7 +615,10 @@
         const errorText = liveModelErrors.get(group.label) ||
           group.keys.map(key => liveModelErrors.get(key)).find(Boolean) ||
           (group.type === 'birdnet' ? liveModelErrors.get('BirdNET') : null);
-        const waitingText = activeChunkAnalyses.size ? 'Analyzing current chunk...' : 'Listening for matches...';
+        const isFinal = $('live-panel-title')?.textContent?.toLowerCase().includes('final');
+        const waitingText = activeChunkAnalyses.size
+          ? 'Analyzing current chunk...'
+          : isFinal ? 'No result from this model' : 'Listening for matches...';
         const mutedClass = errorText && /unavailable on hugging face/i.test(errorText) ? ' lp-waiting--muted' : '';
         html += `<div class="lp-waiting">
           <span class="lp-waiting-dot"></span> <span class="${mutedClass.trim()}">${esc(errorText || waitingText)}</span>
@@ -798,6 +808,30 @@ If no biological species detected, return empty species array.`;
 
     const data = await res.json();
     if (data.error) throw new Error(data.error.message || 'Gemini error');
+
+    if (Array.isArray(data._modelRuns) && data._modelRuns.length) {
+      const runs = data._modelRuns.map(run => {
+        let raw = run.response?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!raw) return null;
+        raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+        try {
+          return { label: run.label || run.model || 'Gemini AI', parsed: JSON.parse(raw) };
+        } catch {
+          return null;
+        }
+      }).filter(Boolean);
+
+      if (runs.length) {
+        return {
+          soundscape_summary: runs[0].parsed.soundscape_summary || '',
+          species: runs.flatMap(run => (run.parsed.species || []).map(sp => ({
+            ...sp,
+            _modelLabel: run.label,
+          }))),
+        };
+      }
+    }
+
     let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!rawText) throw new Error('Gemini returned empty response.');
     rawText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
@@ -1030,7 +1064,7 @@ If no biological species detected, return empty species array.`;
 
     const sourceBadge = sp._source === 'birdnet'
       ? `<span class="source-badge source-badge--birdnet">${esc(sp._detected_by || 'BirdNET')}</span>`
-      : `<span class="source-badge source-badge--gemini">Gemini</span>`;
+      : `<span class="source-badge source-badge--gemini">${esc(sp._detected_by || 'Gemini')}</span>`;
 
     card.innerHTML = `
       ${photoHTML}
@@ -1320,7 +1354,7 @@ If no biological species detected, return empty species array.`;
     const soundscape_summary = gemini.soundscape_summary || '';
     const geminiSpecies      = (gemini.species || []).map(sp => ({
       ...sp,
-      _detected_by: 'Gemini',
+      _detected_by: sp._modelLabel || 'Gemini AI',
       _source: 'gemini',
     }));
 
@@ -1375,13 +1409,13 @@ If no biological species detected, return empty species array.`;
      SPECIES GRID — grouped by detection model
   ================================================================ */
   const MODEL_GROUPS = [
-    {
-      keys:  ['Gemini'],
-      label: 'Gemini AI',
-      desc:  'Google Gemini 2.5 Flash — birds, frogs, insects, mammals',
+    ...GEMINI_MODEL_GROUPS.map(group => ({
+      keys:  [group.key],
+      label: group.key,
+      desc:  group.desc,
       type:  'gemini',
       icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
-    },
+    })),
   ];
 
   function renderSpeciesGrid(species) {

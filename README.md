@@ -10,8 +10,8 @@ Wildlife is often easier to hear than see. This app turns short field recordings
 
 1. Record audio for up to 60 seconds, or upload an audio file.
 2. While recording, the app analyzes each 10-second chunk.
-3. Gemini analyzes the sound for birds, frogs, insects, mammals, and other wildlife.
-4. Duplicate species are merged, keeping the best score.
+3. Multiple Gemini models analyze the sound for birds, frogs, insects, mammals, and other wildlife.
+4. Results are grouped by model, and duplicate species inside each model keep the best score.
 5. Species images are loaded from the Wikipedia REST API.
 6. Reference recordings are loaded from Xeno-canto for comparison.
 
