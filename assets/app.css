@@ -2544,8 +2544,6 @@ body {
 footer {
   padding: 16px 24px max(env(safe-area-inset-bottom), 16px);
   margin-top: auto;
-  position: sticky;
-  bottom: 0;
 }
 
 footer::before {
