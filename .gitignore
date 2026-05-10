@@ -1,11 +1,8 @@
 # ── Secrets ────────────────────────────────────────────────────────
-# Never commit real API keys. Set them in Netlify dashboard instead.
+# Never commit real API keys.
 .env
 .env.local
 .env*.local
-
-# ── Vercel local dev cache ────────────────────────────────────────
-.vercel/
 
 # ── Claude Code local settings ────────────────────────────────────
 .claude/

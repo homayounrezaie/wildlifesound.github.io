@@ -7,28 +7,13 @@
   document.querySelectorAll('.reveal').forEach(el => revealObserver.observe(el));
 
   /* ================================================================
-     CONFIGURATION
-     GEMINI_API_KEY and IUCN_API_TOKEN are intentionally absent here.
-     They live in .env.local and are used by local-server.mjs.
-     NEVER put secret keys in this file — it is public on GitHub.
-
-     Only these two Auth0 values belong here: they are public by design
-     (the Auth0 SPA SDK is built for browser use; security comes from
-     the Allowed Callback URL whitelist in your Auth0 dashboard).
-  ================================================================ */
-  const AUTH0_DOMAIN    = 'dev-cosudi1bgf7lczvs.us.auth0.com';   // e.g. dev-xxxx.us.auth0.com
-  const AUTH0_CLIENT_ID = 'ZYiSRDTl0ousy6QRwMIy6CVAPiZANLUc';       // from Auth0 dashboard → Applications
-
-  /* ================================================================
      CONSTANTS
   ================================================================ */
   const MAX_RECORDING_SECONDS = 60;
-  const CIRCUMFERENCE     = 2 * Math.PI * 64; // r=64 → 402.124
 
   /* ================================================================
      APPLICATION STATE
   ================================================================ */
-  let auth0Client       = null;
   let mediaRecorder     = null;
   let audioChunks       = [];
   let audioCtx          = null;
@@ -37,10 +22,6 @@
   let recordingTimer    = null;
   let isRecording       = false;
   let isProcessing      = false;
-  let userLatLng        = null;
-  let userCity          = 'your region';
-  let leafletMap        = null;
-  let mapReady          = false;
   let detectedSpecies   = [];
   let replayAudio       = null;
   let replayObjectURL   = null;
@@ -90,129 +71,6 @@
       el.style.animation = 'toastOut .3s ease-out forwards';
       setTimeout(() => el.remove(), 310);
     }, ms);
-  }
-
-  /* ================================================================
-     CONFIG VALIDATION
-  ================================================================ */
-  function checkConfig() {
-    const missing = [];
-
-    if (!AUTH0_DOMAIN    || AUTH0_DOMAIN    === 'YOUR_AUTH0_DOMAIN')
-      missing.push({
-        k: 'AUTH0_DOMAIN',
-        label: 'Auth0 Domain (in index.html)',
-        url: 'https://auth0.com/signup'
-      });
-    if (!AUTH0_CLIENT_ID || AUTH0_CLIENT_ID === 'YOUR_CLIENT_ID')
-      missing.push({
-        k: 'AUTH0_CLIENT_ID',
-        label: 'Auth0 Client ID (in index.html)',
-        url: 'https://auth0.com/signup'
-      });
-
-    // Warn if AUTH0_DOMAIN is missing the .auth0.com suffix
-    if (AUTH0_DOMAIN && AUTH0_DOMAIN !== 'YOUR_AUTH0_DOMAIN' &&
-        !AUTH0_DOMAIN.includes('.auth0.com')) {
-      missing.push({
-        k: 'AUTH0_DOMAIN',
-        label: `"${AUTH0_DOMAIN}" looks incomplete — it must be the full domain, e.g. dev-xxxx.us.auth0.com`,
-        url: 'https://manage.auth0.com'
-      });
-    }
-
-    if (!missing.length) return true; // All good — no banner
-
-    $('config-banner').innerHTML =
-      `<strong>⚠ CONFIGURATION INCOMPLETE</strong><ul>` +
-      missing.map(m =>
-        `<li><strong>${esc(m.k)}</strong> — ${esc(m.label)}
-         <a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.url)}</a></li>`
-      ).join('') + `</ul>`;
-    $('config-banner').classList.add('visible');
-    return false;
-  }
-
-  /* ================================================================
-     AUTH0
-  ================================================================ */
-  async function initAuth0() {
-    if (!AUTH0_DOMAIN || AUTH0_DOMAIN === 'YOUR_AUTH0_DOMAIN' ||
-        !AUTH0_CLIENT_ID || AUTH0_CLIENT_ID === 'YOUR_CLIENT_ID') {
-      renderAuthUI(false); return;
-    }
-    // Poll until SDK script has executed (it's deferred)
-    for (let i = 0; i < 30; i++) {
-      if (typeof auth0 !== 'undefined') break;
-      await sleep(200);
-    }
-    if (typeof auth0 === 'undefined') { renderAuthUI(false); return; }
-
-    try {
-      auth0Client = await auth0.createAuth0Client({
-        domain: AUTH0_DOMAIN,
-        clientId: AUTH0_CLIENT_ID,
-        authorizationParams: {
-          redirect_uri: window.location.origin + window.location.pathname
-        }
-      });
-
-      // Handle redirect callback
-      if (window.location.search.includes('code=') &&
-          window.location.search.includes('state=')) {
-        await auth0Client.handleRedirectCallback();
-        window.history.replaceState({}, document.title, window.location.pathname);
-      }
-
-      const authed = await auth0Client.isAuthenticated();
-      const user   = authed ? await auth0Client.getUser() : null;
-      renderAuthUI(authed, user?.email);
-    } catch (err) {
-      console.error('Auth0 init:', err);
-      renderAuthUI(false);
-    }
-  }
-
-  function renderAuthUI(authed, userEmail) {
-    $('auth-dot').classList.toggle('active', authed);
-    if (authed) {
-      const label = userEmail ? esc(userEmail) : 'VERIFIED OBSERVER';
-      $('auth-label').innerHTML = `<span title="${esc(userEmail || '')}">VERIFIED OBSERVER</span>`;
-    } else {
-      $('auth-label').innerHTML = '<a href="#" id="auth-link">sign in to log sightings</a>';
-      $('auth-label').querySelector('#auth-link').addEventListener('click', e => {
-        e.preventDefault();
-        triggerAuth0Login();
-      });
-    }
-  }
-
-  async function triggerAuth0Login() {
-    if (!auth0Client) {
-      toast('Auth0 not configured — add AUTH0_DOMAIN and AUTH0_CLIENT_ID', 'error');
-      return;
-    }
-    try { await auth0Client.loginWithRedirect(); }
-    catch (err) { toast('Login failed: ' + err.message, 'error'); }
-  }
-
-  /* ================================================================
-     GEOLOCATION
-  ================================================================ */
-  function initGeolocation() {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(async pos => {
-      userLatLng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-      try {
-        const r = await fetch(
-          `https://nominatim.openstreetmap.org/reverse?lat=${userLatLng.lat}&lon=${userLatLng.lng}&format=json`,
-          { headers: { 'Accept-Language': 'en' } }
-        );
-        if (!r.ok) return;
-        const d = await r.json();
-        userCity = d.address?.city || d.address?.town || d.address?.village || 'your region';
-      } catch { /* silently ignore */ }
-    }, () => { /* permission denied — use default */ }, { timeout: 12000 });
   }
 
   /* ================================================================
@@ -447,7 +305,6 @@
       }
 
       setRecordState('idle');
-      refreshMap();
       isProcessing = false;
     };
 
@@ -874,118 +731,6 @@ If no biological species detected, return empty species array.`;
     }
   }
 
-  /* ================================================================
-     IUCN RED LIST API
-  ================================================================ */
-  async function fetchIUCN(scientificName) {
-    // Proxy handles all v4 API complexity — returns { category, populationTrend, habitat }
-    const res = await fetch(`/api/iucn?name=${encodeURIComponent(scientificName)}`);
-    if (!res.ok) throw new Error(`IUCN proxy error ${res.status}`);
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-    return {
-      category:        data.category        ?? 'DD',
-      populationTrend: data.populationTrend ?? 'Unknown',
-      habitat:         data.habitat         ?? null
-    };
-  }
-
-  /* ================================================================
-     SCORE CALCULATION
-  ================================================================ */
-  function calcScore(species) {
-    let s = 100;
-    for (const sp of species) {
-      switch (sp.iucn?.category) {
-        case 'CR': s -= 15; break;
-        case 'EN': s -= 10; break;
-        case 'VU': s -= 6;  break;
-        case 'NT': s -= 3;  break;
-        case 'LC': s += 2;  break;
-      }
-    }
-    return Math.max(0, Math.min(100, s));
-  }
-
-  function scoreColor(s) {
-    if (s >= 70) return 'var(--accent)';
-    if (s >= 40) return 'var(--warn)';
-    return 'var(--danger)';
-  }
-
-  function animateScoreGauge(target) {
-    const ring    = $('score-ring');
-    const display = $('score-display');
-    const card    = document.querySelector('.score-card');
-    const color   = scoreColor(target);
-    ring.setAttribute('stroke', color);
-    display.style.color = color;
-
-    // Apply glow class to card
-    if (card) {
-      card.classList.remove('scored-healthy','scored-warn','scored-danger');
-      if (target >= 70) card.classList.add('scored-healthy');
-      else if (target >= 40) card.classList.add('scored-warn');
-      else card.classList.add('scored-danger');
-    }
-
-    const start = performance.now();
-    const dur   = 900;
-
-    function tick(now) {
-      const p    = Math.min((now - start) / dur, 1);
-      const ease = 1 - Math.pow(1 - p, 3);
-      const cur  = Math.round(target * ease);
-      display.textContent = cur;
-      ring.setAttribute('stroke-dashoffset', CIRCUMFERENCE * (1 - cur / 100));
-      if (p < 1) requestAnimationFrame(tick);
-    }
-    requestAnimationFrame(tick);
-  }
-
-  function animateCounter(elId, target, dur = 700) {
-    const el    = $(elId);
-    if (!el) return;
-    const start = performance.now();
-    function tick(now) {
-      const p   = Math.min((now - start) / dur, 1);
-      const ease = 1 - Math.pow(1 - p, 3);
-      el.textContent = Math.round(target * ease);
-      if (p < 1) requestAnimationFrame(tick);
-    }
-    requestAnimationFrame(tick);
-  }
-
-  /* ================================================================
-     SPECIES CARD HELPERS
-  ================================================================ */
-  const STATUS_LABELS = {
-    EX:'EXTINCT', EW:'EXTINCT IN WILD', CR:'CRITICALLY ENDANGERED',
-    EN:'ENDANGERED', VU:'VULNERABLE', NT:'NEAR THREATENED',
-    LC:'LEAST CONCERN', DD:'DATA DEFICIENT', NE:'NOT EVALUATED'
-  };
-
-  function statusClass(cat) {
-    const valid = ['EX','EW','CR','EN','VU','NT','LC','DD','NE'];
-    return 's-' + (valid.includes(cat) ? cat : 'DD');
-  }
-
-  function isThreatened(cat) { return ['CR','EN','VU','NT'].includes(cat); }
-
-  function trendData(trend) {
-    const t = (trend || '').toLowerCase();
-    if (t === 'decreasing') return { arrow:'↓', cls:'t-down',   label:'Decreasing' };
-    if (t === 'increasing') return { arrow:'↑', cls:'t-up',     label:'Increasing' };
-    return                         { arrow:'→', cls:'t-stable', label: trend || 'Unknown' };
-  }
-
-  function extinctionCount(cat) {
-    if (cat === 'CR') return Math.floor(Math.random() * 6)  + 3;   // 3–8
-    if (cat === 'EN') return Math.floor(Math.random() * 11) + 8;   // 8–18
-    if (cat === 'VU') return Math.floor(Math.random() * 21) + 15;  // 15–35
-    return null;
-  }
-
   const BIRD_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M22 6c0 0-4.5 1.5-7 2L12 4l-2 2-4-1s2 4 4 5H4l2 3h14c2-1 3-3 2-7z"/></svg>`;
 
@@ -1041,13 +786,12 @@ If no biological species detected, return empty species array.`;
   }
 
   /* ================================================================
-     UPDATE SPECIES CARD — with image + IUCN data
+     UPDATE SPECIES CARD — with image and model data
   ================================================================ */
   function updateCard(sp) {
     const card = $(`card-${sp._idx}`);
     if (!card) return;
 
-    const cat = sp.iucn?.category || 'DD';
     const img = sp.image;
     const { pct, cls, label } = probMeta(sp);
     const type = speciesType(sp);
@@ -1084,14 +828,6 @@ If no biological species detected, return empty species array.`;
       const fill = card.querySelector('.prob-bar-fill');
       if (fill) fill.style.width = pct + '%';
     });
-
-    // Location flag
-    if (sp.locationFlag) {
-      const flag = document.createElement('div');
-      flag.className = 'location-flag';
-      flag.textContent = '⚠ ' + sp.locationFlag;
-      card.insertBefore(flag, card.querySelector('.log-btn') || card.lastElementChild);
-    }
 
     // Click card → open detail panel
     card.style.cursor = 'pointer';
@@ -1179,17 +915,6 @@ If no biological species detected, return empty species array.`;
       <div class="error-card-body">${esc(message)}</div>
       ${raw ? `<pre>${esc(raw)}</pre>` : ''}`;
     container.appendChild(card);
-  }
-
-  /* ================================================================
-     SCORE HEALTH LABEL
-  ================================================================ */
-  function setScoreHealthLabel(score) {
-    const el = $('score-health');
-    if (!el) return;
-    if (score >= 70) { el.textContent = 'Healthy';  el.style.color = 'var(--accent)'; }
-    else if (score >= 40) { el.textContent = 'Watch'; el.style.color = 'var(--warn)'; }
-    else { el.textContent = 'At Risk'; el.style.color = 'var(--danger)'; }
   }
 
   /* ================================================================
@@ -1403,7 +1128,7 @@ If no biological species detected, return empty species array.`;
       if (cDiff !== 0) return cDiff;
       return (b.probability_score || 0) - (a.probability_score || 0);
     });
-    detectedSpecies = sorted.map((s, i) => ({ ...s, _idx: i, iucn: null }));
+    detectedSpecies = sorted.map((s, i) => ({ ...s, _idx: i }));
 
     // Render species grid with confidence group headers
     renderSpeciesGrid(detectedSpecies);
@@ -1417,16 +1142,13 @@ If no biological species detected, return empty species array.`;
       $('species-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 200);
 
-    // Fetch Wikipedia photos only. Conservation/location data is intentionally
-    // not requested because the simplified app only uses Gemini + Wikipedia.
+    // Fetch Wikipedia photos only.
     await Promise.allSettled(
       detectedSpecies.map(async sp => {
         const imgResult = await Promise.resolve(fetchSpeciesImage(sp.scientific_name, sp._raw_label || sp.common_name))
           .then(value => ({ status: 'fulfilled', value }))
           .catch(reason => ({ status: 'rejected', reason }));
-        sp.iucn = { category: 'DD', populationTrend: 'Unknown', habitat: null };
         sp.image = imgResult.status === 'fulfilled' ? imgResult.value : null;
-        sp.locationFlag = null;
         updateCard(sp);
         renderLiveDetections('results', detectedSpecies);
       })
@@ -1517,24 +1239,6 @@ If no biological species detected, return empty species array.`;
     }
   }
 
-  // Returns a warning string if species seems implausible for user's region, else null
-  function getLocationFlag(sp) {
-    if (!userLatLng || !sp.iucn?.habitat) return null;
-    const habitat = (sp.iucn.habitat || '').toLowerCase();
-    const lat = userLatLng.lat;
-    // Polar species in tropics / tropical species in polar regions
-    const tropical   = ['tropical','rainforest','jungle','mangrove'];
-    const polar      = ['tundra','arctic','polar','subarctic'];
-    const isTropical = tropical.some(t => habitat.includes(t));
-    const isPolar    = polar.some(p => habitat.includes(p));
-    if (isTropical && Math.abs(lat) > 50)
-      return `Tropical species — unusual for ${userCity}`;
-    if (isPolar && Math.abs(lat) < 30)
-      return `Polar/subarctic species — unusual for ${userCity}`;
-    return null;
-  }
-
-
   function showAnalyseAgainBtn() {
     // Remove old button if present
     const old = $('analyse-again-btn');
@@ -1558,170 +1262,6 @@ If no biological species detected, return empty species array.`;
   }
 
   /* ================================================================
-     LOG SIGHTING
-  ================================================================ */
-  async function logSighting(btn, idx) {
-    const sp = detectedSpecies[idx];
-    if (!sp) return;
-
-    if (!auth0Client) {
-      toast('Auth0 not configured. Fill in AUTH0_DOMAIN and AUTH0_CLIENT_ID in the script.', 'error');
-      return;
-    }
-
-    try {
-      const authed = await auth0Client.isAuthenticated();
-      if (!authed) {
-        sessionStorage.setItem('ws_pending_idx', String(idx));
-        await auth0Client.loginWithRedirect();
-        return;
-      }
-
-      const user = await auth0Client.getUser();
-      renderAuthUI(true, user?.email);
-
-      btn.textContent = 'Saving…';
-      btn.disabled    = true;
-
-      const res = await fetch('/api/sightings', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          common_name:     sp.common_name,
-          scientific_name: sp.scientific_name,
-          iucn_category:   sp.iucn?.category || 'DD',
-          lat:             userLatLng?.lat    ?? null,
-          lng:             userLatLng?.lng    ?? null,
-          city:            userCity,
-          user_sub:        user?.sub          || 'anonymous',
-          user_email:      user?.email        || null
-        })
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `Server error ${res.status}`);
-      }
-
-      btn.textContent = '✓ Sighting logged';
-      btn.classList.add('logged');
-      toast('Sighting verified & logged. You are now part of the record.');
-      refreshMap();
-    } catch (err) {
-      btn.textContent = 'Log this sighting →';
-      btn.disabled    = false;
-      toast('Error logging sighting: ' + err.message, 'error');
-    }
-  }
-
-  /* ================================================================
-     LEAFLET MAP
-  ================================================================ */
-  function initMap() {
-    if (mapReady) return;
-
-    const tryBuild = setInterval(() => {
-      if (typeof L === 'undefined') return;
-      clearInterval(tryBuild);
-      mapReady = true;
-
-      const startCenter = userLatLng
-        ? [userLatLng.lat, userLatLng.lng]
-        : [20, 0];
-      const startZoom = userLatLng ? 6 : 2;
-
-      leafletMap = L.map('map', {
-        center: startCenter,
-        zoom:   startZoom,
-        zoomControl: true
-      });
-
-      L.tileLayer(
-        'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-        {
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-          subdomains: 'abcd',
-          maxZoom: 20
-        }
-      ).addTo(leafletMap);
-
-      refreshMap();
-    }, 200);
-  }
-
-  let _lastMapCount = 0;
-
-  async function refreshMap() {
-    if (!leafletMap) return;
-
-    // Fetch all sightings from Supabase via proxy
-    let all = [];
-    try {
-      const r = await fetch('/api/sightings');
-      if (r.ok) all = await r.json();
-    } catch { /* network offline — leave map as-is */ }
-
-    const valid = all.filter(s => s.lat != null && s.lng != null);
-
-    // Clear existing markers
-    leafletMap.eachLayer(layer => {
-      if (layer instanceof L.Marker) leafletMap.removeLayer(layer);
-    });
-
-    valid.forEach(s => {
-      const el = document.createElement('div');
-      el.className = 'map-marker';
-
-      const icon = L.divIcon({
-        html:       el.outerHTML,
-        className:  '',
-        iconSize:   [10, 10],
-        iconAnchor: [5, 5],
-        popupAnchor:[0, -8]
-      });
-
-      const when = new Date(s.timestamp).toLocaleDateString('en-US', {
-        year:'numeric', month:'short', day:'numeric'
-      });
-
-      L.marker([s.lat, s.lng], { icon })
-        .bindPopup(`
-          <div class="popup-name">${esc(s.common_name)}</div>
-          <div class="popup-line">Scientific: ${esc(s.scientific_name || '—')}</div>
-          <div class="popup-line">Status: ${esc(s.iucn_category || 'Unknown')}</div>
-          <div class="popup-line">Location: ${esc(s.city || '—')}</div>
-          <div class="popup-line">Date: ${when}</div>
-          <div class="popup-badge">✓ Logged by a verified observer</div>`)
-        .addTo(leafletMap);
-    });
-
-    const locs = new Set(valid.map(s => `${(+s.lat).toFixed(2)},${(+s.lng).toFixed(2)}`)).size;
-    $('sightings-counter').textContent =
-      `${all.length} species sighting${all.length !== 1 ? 's' : ''} logged across ${locs} location${locs !== 1 ? 's' : ''}`;
-
-    // Fly to newest sighting when one is freshly added
-    if (all.length > _lastMapCount && valid.length > 0) {
-      const newest = valid[0]; // ordered newest-first from API
-      leafletMap.flyTo([newest.lat, newest.lng], Math.max(leafletMap.getZoom(), 8), {
-        animate: true, duration: 1.4
-      });
-    }
-    _lastMapCount = all.length;
-  }
-
-  /* ================================================================
-     INTERSECTION OBSERVER — lazy-init map
-  ================================================================ */
-  function observeMap() {
-    const target = $('map-section');
-    if (!('IntersectionObserver' in window)) { initMap(); return; }
-    const io = new IntersectionObserver(entries => {
-      entries.forEach(e => { if (e.isIntersecting) { initMap(); io.unobserve(target); } });
-    }, { threshold: 0.1 });
-    io.observe(target);
-  }
-
-  /* ================================================================
      SPECIES DETAIL PANEL
   ================================================================ */
   function openDetailPanel(sp) {
@@ -1729,10 +1269,6 @@ If no biological species detected, return empty species array.`;
     const body    = $('detail-body');
     if (!overlay || !body) return;
 
-    const cat     = sp.iucn?.category || 'DD';
-    const trend   = sp.iucn?.populationTrend || 'Unknown';
-    const hab     = sp.iucn?.habitat;
-    const td      = trendData(trend);
     const { label: confLabel } = probMeta(sp);
     const source  = sp._detected_by || (sp._source === 'birdnet' ? 'BirdNET' : 'Gemini AI');
 
@@ -1766,14 +1302,9 @@ If no biological species detected, return empty species array.`;
             <span class="detail-chip-label">Source</span>
             <span class="detail-chip-val">${esc(source)}</span>
           </div>
-          ${hab ? `<div class="detail-chip" style="flex-basis:100%">
-            <span class="detail-chip-label">Habitat</span>
-            <span class="detail-chip-val">${esc(hab)}</span>
-          </div>` : ''}
         </div>
 
         ${sp.sound_description ? `<div class="detail-desc">${esc(sp.sound_description)}</div>` : ''}
-        ${sp.locationFlag ? `<div style="margin-top:14px;font-family:'DM Mono',monospace;font-size:11px;color:var(--warn)">⚠ ${esc(sp.locationFlag)}</div>` : ''}
         ${wikiLink}
       </div>`;
 
@@ -1838,12 +1369,6 @@ If no biological species detected, return empty species array.`;
     window.addEventListener('online',  updateOnlineStatus);
     window.addEventListener('offline', updateOnlineStatus);
 
-    // Config check
-    checkConfig();
-
-    // Wire auth UI immediately (before SDK loads) so the sign-in link is clickable
-    renderAuthUI(false);
-
     // Theme toggle
     (function initTheme() {
       const root = document.documentElement;
@@ -1863,11 +1388,6 @@ If no biological species detected, return empty species array.`;
       });
     })();
 
-    // Background tasks (non-blocking)
-    initGeolocation();
-    observeMap();
-    initAuth0().catch(e => console.warn('Auth0:', e));
-
     // File upload
     initUpload();
 
@@ -1882,24 +1402,6 @@ If no biological species detected, return empty species array.`;
       else startRecording();
     });
 
-    // After Auth0 redirect — resume any pending sighting
-    const pi = sessionStorage.getItem('ws_pending_idx');
-    if (pi !== null) {
-      sessionStorage.removeItem('ws_pending_idx');
-      toast('You are now signed in. Please click "Log this sighting" again on the species card.', 'success', 6000);
-    }
-
-    // Load sightings counter on page load (before map scrolls into view)
-    fetch('/api/sightings')
-      .then(r => r.ok ? r.json() : [])
-      .then(all => {
-        const valid = all.filter(s => s.lat && s.lng);
-        const locs  = new Set(valid.map(s => `${(+s.lat).toFixed(2)},${(+s.lng).toFixed(2)}`)).size;
-        $('sightings-counter').textContent =
-          `${all.length} species sighting${all.length !== 1 ? 's' : ''} logged across ${locs} location${locs !== 1 ? 's' : ''}`;
-        _lastMapCount = all.length;
-      })
-      .catch(() => { $('sightings-counter').textContent = 'Sightings unavailable offline.'; });
   }
 
   // Bootstrap
