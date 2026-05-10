@@ -39,7 +39,16 @@ async function queryModel(model, audioBuffer, mimeType, token) {
       try { eta = JSON.parse(text).estimated_time || 25; } catch {}
       return { model: model.source, loading: true, retry_after: Math.ceil(eta), detections: [] };
     }
-    return { model: model.source, error: `HTTP ${res.status}`, detections: [] };
+    if (/not supported by provider/i.test(text)) {
+      return {
+        model: model.source,
+        unavailable: true,
+        error: 'Model unavailable on Hugging Face Inference',
+        detections: []
+      };
+    }
+    const detail = text ? `: ${text.slice(0, 160)}` : '';
+    return { model: model.source, error: `HTTP ${res.status}${detail}`, detections: [] };
   }
 
   const raw = await res.json().catch(() => []);

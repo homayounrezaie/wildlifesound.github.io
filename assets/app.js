@@ -18,6 +18,8 @@
   let audioChunks       = [];
   let audioCtx          = null;
   let analyserNode      = null;
+  let audioProcessorNode = null;
+  let silenceGainNode   = null;
   let rafId             = null;
   let recordingTimer    = null;
   let isRecording       = false;
@@ -41,11 +43,14 @@
   // Live chunk detection state
   let liveResultsMap    = new Map();  // key: 'model::name' → species obj
   let chunkWindowChunks = [];          // audio chunks for current 10s window
+  let pcmChunks        = [];
+  let chunkPcmChunks   = [];
   let chunkIntervalId   = null;        // setInterval handle
   let chunkLastAt       = 0;           // performance.now() when last chunk was sent
   let chunkElapsedAt    = 0;           // recording seconds when last chunk was sent
   let chunkMime         = '';          // mime type of recording
   let recordingStartedAt = 0;
+  let recordingSampleRate = 44100;
   const activeChunkAnalyses = new Set();
   let liveModelErrors   = new Map();   // key: model group label -> latest visible failure
 
@@ -292,6 +297,22 @@
     analyserNode.fftSize = 2048;
     src.connect(analyserNode);
 
+    recordingSampleRate = audioCtx.sampleRate || 44100;
+    audioProcessorNode = audioCtx.createScriptProcessor(4096, 1, 1);
+    silenceGainNode = audioCtx.createGain();
+    silenceGainNode.gain.value = 0;
+    audioProcessorNode.onaudioprocess = event => {
+      if (!isRecording) return;
+      const input = event.inputBuffer.getChannelData(0);
+      const copy = new Float32Array(input.length);
+      copy.set(input);
+      pcmChunks.push(copy);
+      chunkPcmChunks.push(copy);
+    };
+    src.connect(audioProcessorNode);
+    audioProcessorNode.connect(silenceGainNode);
+    silenceGainNode.connect(audioCtx.destination);
+
     // MediaRecorder
     const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
       ? 'audio/webm;codecs=opus'
@@ -301,6 +322,8 @@
     liveResultsMap.clear();
     liveModelErrors.clear();
     chunkWindowChunks = [];
+    pcmChunks = [];
+    chunkPcmChunks = [];
     chunkLastAt       = performance.now();
     recordingStartedAt = chunkLastAt;
     chunkElapsedAt    = 0;
@@ -321,6 +344,15 @@
 
     mediaRecorder.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
+      if (audioProcessorNode) {
+        audioProcessorNode.disconnect();
+        audioProcessorNode.onaudioprocess = null;
+        audioProcessorNode = null;
+      }
+      if (silenceGainNode) {
+        silenceGainNode.disconnect();
+        silenceGainNode = null;
+      }
       if (audioCtx) { audioCtx.close(); audioCtx = null; }
       if (rafId)    { cancelAnimationFrame(rafId); rafId = null; }
       analyserNode = null;
@@ -328,27 +360,31 @@
       // Setup replay from full recording
       const fullMime = chunkMime || 'audio/webm';
       const fullBlob = new Blob(audioChunks, { type: fullMime });
+      const fullWavBlob = pcmChunks.length ? createWavBlob(pcmChunks, recordingSampleRate) : fullBlob;
       audioChunks = [];
+      pcmChunks = [];
       setupReplay(fullBlob);
 
       // Process leftover chunk if ≥ 5 seconds remain since last chunk
       const leftoverMs = performance.now() - chunkLastAt;
-      if (chunkWindowChunks.length && leftoverMs >= 5000) {
-        const leftoverBlob = new Blob([...chunkWindowChunks], { type: fullMime });
+      if (chunkPcmChunks.length && leftoverMs >= 5000) {
+        const leftoverBlob = createWavBlob(chunkPcmChunks, recordingSampleRate);
         chunkWindowChunks = [];
-        await analyseChunk(leftoverBlob, fullMime, chunkElapsedAt, chunkElapsedAt + Math.round(leftoverMs / 1000));
+        chunkPcmChunks = [];
+        await analyseChunk(leftoverBlob, 'audio/wav', chunkElapsedAt, chunkElapsedAt + Math.round(leftoverMs / 1000));
       }
       chunkWindowChunks = [];
+      chunkPcmChunks = [];
 
       if (activeChunkAnalyses.size) {
         setPanelStatus('Finishing analysis', 'analyzing');
         await Promise.allSettled([...activeChunkAnalyses]);
       }
 
-      if (liveResultsMap.size === 0 && fullBlob.size > 0) {
+      if (liveResultsMap.size === 0 && fullWavBlob.size > 0) {
         const fullDuration = Math.max(1, Math.round((performance.now() - recordingStartedAt) / 1000));
         setPanelStatus('Checking full recording', 'analyzing');
-        await analyseChunk(fullBlob, fullMime, 0, fullDuration);
+        await analyseChunk(fullWavBlob, 'audio/wav', 0, fullDuration);
         if (activeChunkAnalyses.size) await Promise.allSettled([...activeChunkAnalyses]);
       }
 
@@ -410,16 +446,20 @@
     chunkIntervalId = setInterval(async () => {
       if (!isRecording) return;
       const windowChunks = [...chunkWindowChunks];
+      const windowPcm = [...chunkPcmChunks];
       chunkWindowChunks = [];
+      chunkPcmChunks = [];
       const now = performance.now();
       const windowSecs = Math.round((now - chunkLastAt) / 1000);
       const windowStart = chunkElapsedAt;
       const windowEnd   = chunkElapsedAt + windowSecs;
       chunkElapsedAt    = windowEnd;
       chunkLastAt       = now;
-      if (!windowChunks.length) return;
-      const windowBlob = new Blob(windowChunks, { type: chunkMime || 'audio/webm' });
-      await analyseChunk(windowBlob, chunkMime, windowStart, windowEnd);
+      if (!windowPcm.length && !windowChunks.length) return;
+      const windowBlob = windowPcm.length
+        ? createWavBlob(windowPcm, recordingSampleRate)
+        : new Blob(windowChunks, { type: chunkMime || 'audio/webm' });
+      await analyseChunk(windowBlob, windowPcm.length ? 'audio/wav' : chunkMime, windowStart, windowEnd);
     }, 10_000);
   }
 
@@ -490,7 +530,9 @@
           const results = result?.results || [];
           const species = birdnetToSpecies(results);
           for (const modelResult of results) {
-            if (modelResult.error && !(modelResult.detections || []).length) {
+            if (modelResult.unavailable) {
+              liveModelErrors.set(modelResult.model, 'Unavailable on Hugging Face');
+            } else if (modelResult.error && !(modelResult.detections || []).length) {
               liveModelErrors.set(modelResult.model, modelResult.error);
             } else {
               liveModelErrors.delete(modelResult.model);
@@ -669,6 +711,48 @@
       reader.onerror = reject;
       reader.readAsDataURL(blob);
     });
+  }
+
+  function createWavBlob(chunks, sampleRate) {
+    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const samples = new Float32Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      samples.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    const bytesPerSample = 2;
+    const dataSize = samples.length * bytesPerSample;
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buffer);
+
+    const writeString = (at, value) => {
+      for (let i = 0; i < value.length; i++) view.setUint8(at + i, value.charCodeAt(i));
+    };
+
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * bytesPerSample, true);
+    view.setUint16(32, bytesPerSample, true);
+    view.setUint16(34, 16, true);
+    writeString(36, 'data');
+    view.setUint32(40, dataSize, true);
+
+    let dataOffset = 44;
+    for (const sample of samples) {
+      const clamped = Math.max(-1, Math.min(1, sample));
+      view.setInt16(dataOffset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+      dataOffset += 2;
+    }
+
+    return new Blob([buffer], { type: 'audio/wav' });
   }
 
   /* ================================================================
