@@ -16,6 +16,7 @@
   const NATURELM_MODEL_GROUPS = [
     { key: 'NatureLM-audio', desc: 'Bioacoustic audio-language model' },
   ];
+  const BIRDNET_MIN_CONFIDENCE = 0.03;
 
   /* ================================================================
      APPLICATION STATE
@@ -1138,10 +1139,13 @@ If no biological species detected, return empty species array.`;
         if (data.message !== 'pooled') return;
         cleanup();
 
-        const detections = (data.pooled || [])
-          .filter(item => Number(item.confidence) >= 0.10)
+        const ranked = (data.pooled || [])
           .sort((a, b) => b.confidence - a.confidence)
-          .slice(0, 8)
+          .filter(item => Number.isFinite(Number(item.confidence)));
+        const confident = ranked.filter(item => Number(item.confidence) >= BIRDNET_MIN_CONFIDENCE);
+        const candidates = (confident.length ? confident : ranked.slice(0, 3).filter(item => Number(item.confidence) >= 0.01))
+          .slice(0, 8);
+        const detections = candidates
           .map(item => ({
             label: `${item.sciName || ''}_${item.nameI18n || item.name || ''}`,
             commonName: item.nameI18n || item.name || '',
@@ -1614,6 +1618,15 @@ If no biological species detected, return empty species array.`;
     const natureLmSpecies = natureLmResult.status === 'fulfilled'
       ? natureLmToSpecies(natureLmResult.value)
       : [];
+    const modelMessages = new Map();
+    if (birdnetRaw.status === 'rejected') {
+      modelMessages.set('BirdNET', birdnetRaw.reason?.message || 'BirdNET could not analyze this audio.');
+    }
+    if (natureLmResult.status === 'fulfilled' && natureLmResult.value?.disabled) {
+      modelMessages.set('NatureLM-audio', natureLmResult.value.message || 'Start the NatureLM bridge to enable this model.');
+    } else if (natureLmResult.status === 'rejected') {
+      modelMessages.set('NatureLM-audio', natureLmResult.reason?.message || 'NatureLM bridge is not running.');
+    }
 
     if (geminiResult.status === 'rejected') {
       const err = geminiResult.reason;
@@ -1659,7 +1672,7 @@ If no biological species detected, return empty species array.`;
     detectedSpecies = sorted.map((s, i) => ({ ...s, _idx: i }));
 
     // Render species grid with confidence group headers
-    renderSpeciesGrid(detectedSpecies);
+    renderSpeciesGrid(detectedSpecies, modelMessages);
     setPanelStatus('Results ready', 'results');
     renderLiveDetections('results', detectedSpecies);
 
@@ -1710,7 +1723,7 @@ If no biological species detected, return empty species array.`;
     })),
   ];
 
-  function renderSpeciesGrid(species) {
+  function renderSpeciesGrid(species, modelMessages = new Map()) {
     const grid = $('species-grid');
     grid.innerHTML = '';
 
@@ -1741,7 +1754,7 @@ If no biological species detected, return empty species array.`;
           renderLoadingCard(sp, sp._idx, list);
         }
       } else {
-        list.innerHTML = '<div class="model-empty">No confident match from this model</div>';
+        list.innerHTML = `<div class="model-empty">${esc(modelMessages.get(group.label) || 'No confident match from this model')}</div>`;
       }
     }
 
