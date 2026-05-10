@@ -1964,12 +1964,22 @@ body {
   border: 1px solid rgba(91,183,217,.22);
 }
 
+.source-badge--naturelm {
+  color: #bba7ff;
+  background: rgba(145,123,255,.13);
+  border: 1px solid rgba(145,123,255,.24);
+}
+
 :root.light .source-badge--gemini {
   color: #a86518;
 }
 
 :root.light .source-badge--birdnet {
   color: #1a7c9b;
+}
+
+:root.light .source-badge--naturelm {
+  color: #6451c8;
 }
 
 .live-empty {
@@ -2339,6 +2349,10 @@ body {
   border-left: 3px solid #f5a623;
 }
 
+.model-section--naturelm {
+  border-left: 3px solid #9b87ff;
+}
+
 .model-section-header {
   display: flex;
   align-items: center;
@@ -2445,6 +2459,11 @@ body {
   color: #f5a623;
 }
 
+.model-section--naturelm .model-section-icon {
+  background: rgba(155,135,255,.12);
+  color: #9b87ff;
+}
+
 .model-section-icon svg {
   width: 16px;
   height: 16px;
@@ -2465,6 +2484,10 @@ body {
 
 .model-section--gemini .model-section-label {
   color: #f5a623;
+}
+
+.model-section--naturelm .model-section-label {
+  color: #9b87ff;
 }
 
 .model-section-desc {
@@ -2494,6 +2517,11 @@ body {
 .model-section--gemini .model-section-count {
   background: rgba(245,166,35,.1);
   color: #f5a623;
+}
+
+.model-section--naturelm .model-section-count {
+  background: rgba(155,135,255,.1);
+  color: #9b87ff;
 }
 
 .model-section-list .species-card:first-child {
@@ -2551,18 +2579,36 @@ body {
   border-left-color: #d4820a;
 }
 
+:root.light .model-section--naturelm {
+  border-left-color: #6451c8;
+}
+
 :root.light .model-section--gemini .model-section-icon {
   background: rgba(212,130,10,.1);
   color: #d4820a;
+}
+
+:root.light .model-section--naturelm .model-section-icon {
+  background: rgba(100,81,200,.1);
+  color: #6451c8;
 }
 
 :root.light .model-section--gemini .model-section-label {
   color: #d4820a;
 }
 
+:root.light .model-section--naturelm .model-section-label {
+  color: #6451c8;
+}
+
 :root.light .model-section--gemini .model-section-count {
   background: rgba(212,130,10,.1);
   color: #d4820a;
+}
+
+:root.light .model-section--naturelm .model-section-count {
+  background: rgba(100,81,200,.1);
+  color: #6451c8;
 }
 
 

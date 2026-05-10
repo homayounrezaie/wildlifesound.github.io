@@ -12,8 +12,9 @@ Wildlife is often easier to hear than see. This app turns short field recordings
 2. While recording, the app analyzes each 10-second chunk.
 3. Gemini 2.5 Flash Lite analyzes birds, frogs, insects, mammals, and other wildlife.
 4. BirdNET runs locally in the browser for bird sound detection.
-5. Results are grouped by Gemini and BirdNET.
-6. Species images are loaded from the Wikipedia REST API.
+5. NatureLM-audio can run through an optional server endpoint.
+6. Results are grouped by Gemini, BirdNET, and NatureLM when configured.
+7. Species images are loaded from the Wikipedia REST API.
 
 ## Setup
 
@@ -21,6 +22,8 @@ Create `.env.local`:
 
 ```bash
 GEMINI_API_KEY=your_gemini_api_key
+NATURELM_API_URL=
+NATURELM_API_TOKEN=
 ```
 
 Run locally:
@@ -46,6 +49,7 @@ Included sample:
 
 - `GEMINI_API_KEY` powers Gemini wildlife detection.
 - BirdNET runs locally in the browser with TensorFlow.js and does not need a server token.
+- NatureLM-audio is not available through Hugging Face hosted Inference Providers. To use it, run or deploy a NatureLM service and set `NATURELM_API_URL`.
 - Keep tokens server-side in `.env.local`. Do not put secret keys in frontend files.
 - To let public users share your keys, host the app with the included API routes. A static GitHub Pages deploy cannot hide shared keys.
 - If the frontend is hosted separately from the API, set `window.WILDLIFE_API_BASE` to the API host before loading `assets/app.js`.

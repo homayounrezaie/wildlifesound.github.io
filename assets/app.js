@@ -13,6 +13,9 @@
   const GEMINI_MODEL_GROUPS = [
     { key: 'Gemini 2.5 Flash Lite', desc: 'Fast Gemini wildlife detector' },
   ];
+  const NATURELM_MODEL_GROUPS = [
+    { key: 'NatureLM-audio', desc: 'Bioacoustic audio-language model' },
+  ];
 
   /* ================================================================
      APPLICATION STATE
@@ -625,7 +628,24 @@
           renderLivePanelBody();
         });
 
-      await Promise.allSettled([geminiTask, birdnetTask]);
+      const natureLmTask = callNatureLM(b64, mimeType)
+        .then(result => {
+          liveModelErrors.delete('NatureLM-audio');
+          if (result?.disabled) {
+            liveModelErrors.set('NatureLM-audio', result.message || 'Set NATURELM_API_URL to enable');
+            renderLivePanelBody();
+            return;
+          }
+          const natureLmSpecies = natureLmToSpecies(result);
+          if (!natureLmSpecies.length) liveModelErrors.set('NatureLM-audio', 'No confident match yet');
+          mergeSpecies(natureLmSpecies);
+        })
+        .catch(err => {
+          liveModelErrors.set('NatureLM-audio', err.message || 'Unable to analyse audio.');
+          renderLivePanelBody();
+        });
+
+      await Promise.allSettled([geminiTask, birdnetTask, natureLmTask]);
     } catch {
       // Live chunk failures should not stop recording.
     }
@@ -637,6 +657,7 @@
   const LIVE_MODEL_GROUPS = [
     ...GEMINI_MODEL_GROUPS.map(group => ({ keys: [group.key], label: group.key, type: 'gemini' })),
     { keys: ['BirdNET'], label: 'BirdNET', type: 'birdnet' },
+    ...NATURELM_MODEL_GROUPS.map(group => ({ keys: [group.key], label: group.key, type: 'naturelm' })),
   ];
 
   function startLivePanel() {
@@ -908,6 +929,28 @@ If no biological species detected, return empty species array.`;
     }
   }
 
+  async function callNatureLM(base64Audio, mimeType) {
+    const res = await fetch(apiUrl('/api/naturelm'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        audio_base64: base64Audio,
+        mime_type: (mimeType || 'audio/webm').split(';')[0],
+        query: 'What are the common names and scientific names for the animal species in the audio, if any? Return JSON with species.'
+      })
+    });
+
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { const d = await res.json(); msg = d.error?.message || msg; } catch {}
+      throw new Error(msg);
+    }
+
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message || 'NatureLM error');
+    return data;
+  }
+
   /* ================================================================
      BIRDNET — official browser model
      Runs locally in a Web Worker using TensorFlow.js and BirdNET assets.
@@ -1153,6 +1196,28 @@ If no biological species detected, return empty species array.`;
     return out;
   }
 
+  function natureLmToSpecies(result) {
+    const source = result?.model || 'NatureLM-audio';
+    const explicit = Array.isArray(result?.species) ? result.species : [];
+    const rawItems = explicit.length
+      ? explicit
+      : String(result?.raw_text || result?.answer || '')
+        .split(/\n|,|;/)
+        .map(item => ({ common_name: item.replace(/^#?\d+(?:\.\d+)?s?\s*[-:]\s*/i, '') }));
+
+    return rawItems
+      .map(sp => normalizeDetectedSpecies({
+        ...sp,
+        confidence: sp.confidence || 'medium',
+        probability_score: sp.probability_score ?? sp.probability ?? 55,
+        sound_description: sp.sound_description || result?.soundscape_summary || '',
+        _detected_by: source,
+        _source: 'naturelm',
+      }, source))
+      .filter(Boolean)
+      .filter(sp => !/^(none|unknown|no species|no animal|no wildlife)$/i.test(sp.common_name));
+  }
+
   /* ================================================================
      WIKIPEDIA IMAGE FETCH
      Uses the REST summary endpoint — no API key, CORS-enabled.
@@ -1266,9 +1331,10 @@ If no biological species detected, return empty species array.`;
               onload="this.classList.add('loaded')" onerror="this.outerHTML='<div class=\\'species-row-photo-placeholder\\'>${BIRD_ICON.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}</div>'">`
       : `<div class="species-row-photo-placeholder">${BIRD_ICON}</div>`;
 
-    const sourceBadge = sp._source === 'birdnet'
-      ? `<span class="source-badge source-badge--birdnet">${esc(sp._detected_by || 'BirdNET')}</span>`
-      : `<span class="source-badge source-badge--gemini">${esc(sp._detected_by || 'Gemini')}</span>`;
+    const sourceClass = sp._source === 'birdnet'
+      ? 'source-badge--birdnet'
+      : sp._source === 'naturelm' ? 'source-badge--naturelm' : 'source-badge--gemini';
+    const sourceBadge = `<span class="source-badge ${sourceClass}">${esc(sp._detected_by || 'Gemini')}</span>`;
 
     card.innerHTML = `
       ${photoHTML}
@@ -1537,13 +1603,17 @@ If no biological species detected, return empty species array.`;
       return;
     }
 
-    const [birdnetRaw, geminiResult] = await Promise.allSettled([
+    const [birdnetRaw, geminiResult, natureLmResult] = await Promise.allSettled([
       callBirdNet(b64, mimeType),
       callGemini(b64, mimeType),
+      callNatureLM(b64, mimeType),
     ]);
 
     const birdnetResults = (birdnetRaw.status === 'fulfilled' ? birdnetRaw.value.results : []) || [];
     const birdnetSpecies = birdnetToSpecies(birdnetResults);
+    const natureLmSpecies = natureLmResult.status === 'fulfilled'
+      ? natureLmToSpecies(natureLmResult.value)
+      : [];
 
     if (geminiResult.status === 'rejected') {
       const err = geminiResult.reason;
@@ -1567,7 +1637,7 @@ If no biological species detected, return empty species array.`;
       }, 'Gemini AI'))
       .filter(Boolean);
 
-    const species = [...geminiSpecies, ...birdnetSpecies];
+    const species = [...geminiSpecies, ...birdnetSpecies, ...natureLmSpecies];
 
     if (!species.length) {
       appendErrorCard('species-grid', 'No Species Detected',
@@ -1631,6 +1701,13 @@ If no biological species detected, return empty species array.`;
       type:  'birdnet',
       icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 6c0 0-4.5 1.5-7 2L12 4l-2 2-4-1s2 4 4 5H4l2 3h14c2-1 3-3 2-7z"/></svg>`,
     },
+    ...NATURELM_MODEL_GROUPS.map(group => ({
+      keys:  [group.key],
+      label: group.key,
+      desc:  group.desc,
+      type:  'naturelm',
+      icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12c4-8 12-8 16 0"/><path d="M4 12c4 8 12 8 16 0"/><circle cx="12" cy="12" r="2"/><path d="M12 4v2M12 18v2M4 12H2M22 12h-2"/></svg>`,
+    })),
   ];
 
   function renderSpeciesGrid(species) {
