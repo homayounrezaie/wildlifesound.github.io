@@ -35,6 +35,7 @@
   let chunkElapsedAt    = 0;           // recording seconds when last chunk was sent
   let chunkMime         = '';          // mime type of recording
   const activeChunkAnalyses = new Set();
+  let liveModelErrors   = new Map();   // key: model group label -> latest visible failure
 
   /* ================================================================
      DOM REFS (resolved once after DOMContentLoaded)
@@ -49,6 +50,19 @@
     return String(str)
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
       .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+  }
+
+  /* ================================================================
+     WORKFLOW STEP INDICATOR
+  ================================================================ */
+  function setWorkflowStep(activeIndex) {
+    // activeIndex: 0=Record, 1=Analyze, 2=Identify, -1=reset
+    document.querySelectorAll('.wf-step').forEach((el, i) => {
+      el.classList.remove('active', 'done');
+      if (activeIndex === -1) return;
+      if (i < activeIndex) el.classList.add('done');
+      else if (i === activeIndex) el.classList.add('active');
+    });
   }
 
   /* ================================================================
@@ -253,6 +267,7 @@
 
     // Init live detection state
     liveResultsMap.clear();
+    liveModelErrors.clear();
     chunkWindowChunks = [];
     chunkLastAt       = performance.now();
     chunkElapsedAt    = 0;
@@ -301,10 +316,12 @@
       stopLivePanel();
 
       if (liveResultsMap.size === 0) {
-        appendErrorCard('species-grid', 'No Species Detected',
-          'No biological species detected. Try recording outdoors near vegetation at dawn or dusk.');
+        const failures = [...liveModelErrors.entries()].map(([model, msg]) => `${model}: ${msg}`).join('\n');
+        appendErrorCard('species-grid',
+          failures ? 'Analysis Failed' : 'No Species Detected',
+          failures || 'No biological species detected. Try recording outdoors near vegetation at dawn or dusk.');
         renderLiveDetections('empty');
-        setPanelStatus('No detection', 'empty');
+        setPanelStatus(failures ? 'Analysis failed' : 'No detection', failures ? 'error' : 'empty');
       } else {
         detectedSpecies = [...liveResultsMap.values()];
         setPanelStatus('Results ready', 'results');
@@ -314,10 +331,12 @@
         showAnalyseAgainBtn();
       }
 
+      setWorkflowStep(detectedSpecies.length > 0 ? 2 : -1);
       setRecordState('idle');
       isProcessing = false;
     };
 
+    setWorkflowStep(0);
     mediaRecorder.start(100);
     isRecording = true;
 
@@ -367,6 +386,7 @@
     isRecording = false;
     isProcessing = true;
     if (mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+    setWorkflowStep(1);
     setRecordState('processing');
   }
 
@@ -420,11 +440,18 @@
       };
 
       const birdnetTask = callBirdNet(b64, mimeType)
-        .then(result => mergeSpecies(birdnetToSpecies(result?.results || [])))
-        .catch(() => {});
+        .then(result => {
+          liveModelErrors.delete('BirdNET');
+          mergeSpecies(birdnetToSpecies(result?.results || []));
+        })
+        .catch(err => {
+          liveModelErrors.set('BirdNET', err.message || 'Unable to analyse audio.');
+          renderLivePanelBody();
+        });
 
       const geminiTask = callGemini(b64, mimeType)
         .then(result => {
+          liveModelErrors.delete('Gemini AI');
           const geminiSpecies = (result?.species || []).map(sp => ({
             ...sp,
             _detected_by: 'Gemini',
@@ -432,7 +459,10 @@
           }));
           mergeSpecies(geminiSpecies);
         })
-        .catch(() => {});
+        .catch(err => {
+          liveModelErrors.set('Gemini AI', err.message || 'Unable to analyse audio.');
+          renderLivePanelBody();
+        });
 
       await Promise.allSettled([geminiTask, birdnetTask]);
     } catch {
@@ -485,9 +515,11 @@
         <div class="lp-group-label">${group.label}</div>`;
 
       if (!items.length) {
+        const errorText = liveModelErrors.get(group.label) ||
+          (group.type === 'birdnet' ? liveModelErrors.get('BirdNET') : null);
         const waitingText = activeChunkAnalyses.size ? 'Analyzing current chunk...' : 'Listening for matches...';
         html += `<div class="lp-waiting">
-          <span class="lp-waiting-dot"></span> ${waitingText}
+          <span class="lp-waiting-dot"></span> ${esc(errorText || waitingText)}
         </div>`;
       } else {
         for (const sp of items) {
@@ -607,15 +639,6 @@ Respond ONLY in this exact JSON format, no other text:
 If no biological species detected, return empty species array.`;
 
   async function callGemini(base64Audio, mimeType) {
-    const key = _geminiKey;
-    if (!key) throw new Error('No Gemini API key provided.');
-
-    const GEMINI_MODELS = [
-      'gemini-2.5-flash',
-      'gemini-2.0-flash-lite',
-      'gemini-1.5-flash',
-    ];
-
     const body = {
       contents: [{
         parts: [
@@ -626,56 +649,38 @@ If no biological species detected, return empty species array.`;
       generationConfig: { temperature: 0.1 }
     };
 
-    let lastErr;
-    for (const model of GEMINI_MODELS) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-      let res;
-      try {
-        res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-      } catch (e) { lastErr = e; continue; }
+    const res = await fetch('/api/analyse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
 
-      if (!res.ok) {
-        let msg = `HTTP ${res.status}`;
-        try { const d = await res.json(); msg += ': ' + (d.error?.message || res.statusText); } catch {}
-        lastErr = new Error(msg);
-        if (res.status === 429 || res.status === 503) continue; // try next model
-        throw lastErr;
-      }
-
-      const data = await res.json();
-
-      // Gemini can return HTTP 200 with an error body
-      if (data.error) {
-        const msg = data.error.message || 'Gemini error';
-        const err = new Error(msg);
-        if (msg.toLowerCase().includes('overload') || msg.toLowerCase().includes('503'))
-          err.isOverload = true;
-        lastErr = err;
-        if (err.isOverload) continue;
-        throw err;
-      }
-
-      let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!rawText) { lastErr = new Error('Gemini returned an empty response.'); continue; }
-
-      // Strip markdown fences
-      rawText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-
-      let parsed;
-      try { parsed = JSON.parse(rawText); }
-      catch (e) {
-        const err  = new Error('JSON parse failed');
-        err.raw    = rawText;
-        throw err;
-      }
-      return parsed;
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { const d = await res.json(); msg += ': ' + (d.error?.message || res.statusText); } catch {}
+      throw new Error(msg);
     }
 
-    throw lastErr || new Error('All Gemini models failed.');
+    const data = await res.json();
+
+    if (data.error) {
+      const msg = data.error.message || 'Gemini error';
+      const err = new Error(msg);
+      if (msg.toLowerCase().includes('overload') || msg.toLowerCase().includes('503')) err.isOverload = true;
+      throw err;
+    }
+
+    let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!rawText) throw new Error('Gemini returned an empty response.');
+    rawText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+
+    try {
+      return JSON.parse(rawText);
+    } catch {
+      const err = new Error('JSON parse failed');
+      err.raw = rawText;
+      throw err;
+    }
   }
 
   /* ================================================================
@@ -685,63 +690,22 @@ If no biological species detected, return empty species array.`;
      Gemini will resolve labels to proper common/scientific names.
   ================================================================ */
   async function callBirdNet(base64Audio, mimeType) {
-    const token = _hfToken;
-    if (!token) return { results: [] };
+    const post = () => fetch('/api/birdnet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audio: base64Audio, mimeType }),
+    });
 
-    const HF_BASE = 'https://router.huggingface.co/hf-inference/models';
-    const MODELS = [
-      { id: 'DBD-research-group/AST-BirdSet-XCL', source: 'BirdNET/AST' },
-      { id: 'dima806/bird_sounds_classification',  source: 'BirdNET/W2V' },
-    ];
-    const audioBuffer = Uint8Array.from(atob(base64Audio), c => c.charCodeAt(0));
-
-    async function queryModel(model) {
-      let res;
-      try {
-        res = await fetch(`${HF_BASE}/${model.id}`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': mimeType || 'audio/webm',
-            'Accept': 'application/json',
-          },
-          body: audioBuffer,
-          signal: AbortSignal.timeout(35_000),
-        });
-      } catch (err) {
-        return { model: model.source, error: err.message, detections: [] };
-      }
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        if (res.status === 503) {
-          let eta = 25;
-          try { eta = JSON.parse(text).estimated_time || 25; } catch {}
-          return { model: model.source, loading: true, retry_after: Math.ceil(eta), detections: [] };
-        }
-        return { model: model.source, error: `HTTP ${res.status}`, detections: [] };
-      }
-
-      const raw = await res.json().catch(() => []);
-      const detections = (Array.isArray(raw) ? raw : [])
-        .filter(d => d.score > 0.01)
-        .slice(0, 8)
-        .map(d => ({ label: d.label, score: Math.round(d.score * 100), source: model.source }));
-      return { model: model.source, detections };
+    let res = await post();
+    if (res.status === 503) {
+      const d = await res.json().catch(() => ({}));
+      const wait = Math.min((d.retry_after || 12) * 1000, 15_000);
+      await new Promise(r => setTimeout(r, wait));
+      res = await post();
     }
 
-    const modelResults = await Promise.all(MODELS.map(m => queryModel(m)));
-
-    // If all models loading, retry once after wait
-    const loadingAll = modelResults.every(r => r.loading);
-    if (loadingAll) {
-      const maxWait = Math.min(Math.max(...modelResults.map(r => (r.retry_after || 25) * 1000)), 40_000);
-      await new Promise(r => setTimeout(r, maxWait));
-      const retried = await Promise.all(MODELS.map(m => queryModel(m)));
-      return { results: retried };
-    }
-
-    return { results: modelResults };
+    if (!res.ok) throw new Error(`BirdNET HTTP ${res.status}`);
+    return res.json().catch(() => ({ results: [] }));
   }
 
   /* Format a raw BirdNet label into a readable display name.
@@ -1102,10 +1066,6 @@ If no biological species detected, return empty species array.`;
   }
 
   async function handleUploadedFile(file) {
-    if (!_geminiKey && !_hfToken) {
-      showApiKeyModal(() => handleUploadedFile(file));
-      return;
-    }
     // Validate type
     const mime = file.type || '';
     const ext  = file.name.split('.').pop().toLowerCase();
@@ -1223,7 +1183,8 @@ If no biological species detected, return empty species array.`;
     setPanelStatus('Results ready', 'results');
     renderLiveDetections('results', detectedSpecies);
 
-    $('soundscape-summary').textContent = soundscape_summary || '';
+    const summaryEl = $('soundscape-summary');
+    if (summaryEl) summaryEl.textContent = soundscape_summary || '';
 
     // Scroll to species
     setTimeout(() => {
@@ -1483,18 +1444,11 @@ If no biological species detected, return empty species array.`;
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
 
-    // Clear keys on page unload
-    window.addEventListener('pagehide', () => { _geminiKey = ''; _hfToken = ''; });
-
     // Record button
     $('record-btn').addEventListener('click', () => {
       if (isProcessing) return;
       if (isRecording) { stopRecording(); return; }
-      if (_geminiKey || _hfToken) {
-        startRecording();
-      } else {
-        showApiKeyModal(() => startRecording());
-      }
+      startRecording();
     });
 
   }
