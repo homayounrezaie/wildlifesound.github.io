@@ -1351,8 +1351,9 @@ body {
   50%       { box-shadow: 0 0 0 8px rgba(95,184,255,.18); }
 }
 @keyframes wfArrowSlide {
-  0%, 100% { transform: translateX(0); opacity: .5; }
-  50%       { transform: translateX(3px); opacity: 1; }
+  0%   { stroke-dashoffset: 24; opacity: .4; }
+  50%  { opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: .4; }
 }
 
 .workflow-row {
@@ -1419,13 +1420,32 @@ body {
 .wf-step.done span { color: #64d6a7; }
 
 .wf-arrow {
-  color: var(--border);
   display: flex;
   align-items: center;
   margin-bottom: 18px;
-  animation: wfArrowSlide 1.8s ease-in-out infinite;
+  width: 32px;
 }
-.wf-arrow svg { width: 16px; height: 16px; }
+.wf-arrow svg {
+  width: 32px;
+  height: 12px;
+  overflow: visible;
+}
+.wf-arrow .arrow-line {
+  stroke: var(--border);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 3;
+  stroke-dashoffset: 24;
+  stroke-linecap: round;
+  animation: wfArrowSlide 1.4s linear infinite;
+}
+.wf-arrow .arrow-head {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: .6;
+}
 
 :root.light .wf-icon { background: var(--surface-2); }
 :root.light .wf-step.active .wf-icon { background: rgba(26,127,212,.1); }
