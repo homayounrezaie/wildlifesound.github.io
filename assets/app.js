@@ -27,6 +27,10 @@
   let replayObjectURL   = null;
   let lastSignalUpdate  = 0;
 
+  // User-supplied API keys (memory only, cleared on page unload)
+  let _geminiKey = '';
+  let _hfToken   = '';
+
   // Live chunk detection state
   let liveResultsMap    = new Map();  // key: 'model::name' → species obj
   let chunkWindowChunks = [];          // audio chunks for current 10s window
@@ -49,6 +53,39 @@
     return String(str)
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
       .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+  }
+
+  /* ================================================================
+     API KEY MODAL
+  ================================================================ */
+  function showApiKeyModal(onConfirm) {
+    const overlay = $('apikey-overlay');
+    overlay.classList.remove('hidden');
+    $('input-gemini-key').value = _geminiKey;
+    $('input-hf-token').value   = _hfToken;
+    $('input-gemini-key').focus();
+
+    function close() {
+      overlay.classList.add('hidden');
+      $('apikey-confirm').removeEventListener('click', confirm);
+      $('apikey-cancel').removeEventListener('click', cancel);
+      overlay.removeEventListener('click', backdropClose);
+    }
+    function confirm() {
+      const gk = $('input-gemini-key').value.trim();
+      const hf = $('input-hf-token').value.trim();
+      if (!gk && !hf) { toast('Enter at least one API key.', 'error'); return; }
+      _geminiKey = gk;
+      _hfToken   = hf;
+      close();
+      onConfirm();
+    }
+    function cancel() { close(); }
+    function backdropClose(e) { if (e.target === overlay) cancel(); }
+
+    $('apikey-confirm').addEventListener('click', confirm);
+    $('apikey-cancel').addEventListener('click', cancel);
+    overlay.addEventListener('click', backdropClose);
   }
 
   /* ================================================================
@@ -607,7 +644,9 @@ Respond ONLY in this exact JSON format, no other text:
 If no biological species detected, return empty species array.`;
 
   async function callGemini(base64Audio, mimeType) {
-    const url = '/api/analyse';
+    const key = _geminiKey;
+    if (!key) throw new Error('No Gemini API key provided.');
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${key}`;
     const body = {
       contents: [{
         parts: [
@@ -664,23 +703,63 @@ If no biological species detected, return empty species array.`;
      Gemini will resolve labels to proper common/scientific names.
   ================================================================ */
   async function callBirdNet(base64Audio, mimeType) {
-    const post = () => fetch('/api/birdnet', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ audio: base64Audio, mimeType }),
-    });
+    const token = _hfToken;
+    if (!token) return { results: [] };
 
-    let res = await post();
+    const HF_BASE = 'https://router.huggingface.co/hf-inference/models';
+    const MODELS = [
+      { id: 'DBD-research-group/AST-BirdSet-XCL', source: 'BirdNET/AST' },
+      { id: 'dima806/bird_sounds_classification',  source: 'BirdNET/W2V' },
+    ];
+    const audioBuffer = Uint8Array.from(atob(base64Audio), c => c.charCodeAt(0));
 
-    if (res.status === 503) {
-      const d = await res.json().catch(() => ({}));
-      const wait = Math.min((d.retry_after || 25) * 1000, 40_000);
-      await new Promise(r => setTimeout(r, wait));
-      res = await post();
+    async function queryModel(model) {
+      let res;
+      try {
+        res = await fetch(`${HF_BASE}/${model.id}`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': mimeType || 'audio/webm',
+            'Accept': 'application/json',
+          },
+          body: audioBuffer,
+          signal: AbortSignal.timeout(35_000),
+        });
+      } catch (err) {
+        return { model: model.source, error: err.message, detections: [] };
+      }
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        if (res.status === 503) {
+          let eta = 25;
+          try { eta = JSON.parse(text).estimated_time || 25; } catch {}
+          return { model: model.source, loading: true, retry_after: Math.ceil(eta), detections: [] };
+        }
+        return { model: model.source, error: `HTTP ${res.status}`, detections: [] };
+      }
+
+      const raw = await res.json().catch(() => []);
+      const detections = (Array.isArray(raw) ? raw : [])
+        .filter(d => d.score > 0.01)
+        .slice(0, 8)
+        .map(d => ({ label: d.label, score: Math.round(d.score * 100), source: model.source }));
+      return { model: model.source, detections };
     }
 
-    if (!res.ok) return { results: [] };
-    return res.json().catch(() => ({ results: [] }));
+    const modelResults = await Promise.all(MODELS.map(m => queryModel(m)));
+
+    // If all models loading, retry once after wait
+    const loadingAll = modelResults.every(r => r.loading);
+    if (loadingAll) {
+      const maxWait = Math.min(Math.max(...modelResults.map(r => (r.retry_after || 25) * 1000)), 40_000);
+      await new Promise(r => setTimeout(r, maxWait));
+      const retried = await Promise.all(MODELS.map(m => queryModel(m)));
+      return { results: retried };
+    }
+
+    return { results: modelResults };
   }
 
   /* Format a raw BirdNet label into a readable display name.
@@ -1041,6 +1120,10 @@ If no biological species detected, return empty species array.`;
   }
 
   async function handleUploadedFile(file) {
+    if (!_geminiKey && !_hfToken) {
+      showApiKeyModal(() => handleUploadedFile(file));
+      return;
+    }
     // Validate type
     const mime = file.type || '';
     const ext  = file.name.split('.').pop().toLowerCase();
@@ -1418,11 +1501,18 @@ If no biological species detected, return empty species array.`;
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
 
+    // Clear keys on page unload
+    window.addEventListener('pagehide', () => { _geminiKey = ''; _hfToken = ''; });
+
     // Record button
     $('record-btn').addEventListener('click', () => {
       if (isProcessing) return;
-      if (isRecording) stopRecording();
-      else startRecording();
+      if (isRecording) { stopRecording(); return; }
+      if (_geminiKey || _hfToken) {
+        startRecording();
+      } else {
+        showApiKeyModal(() => startRecording());
+      }
     });
 
   }

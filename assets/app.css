@@ -2539,6 +2539,119 @@ body {
 }
 
 /* ================================================================
+   API KEY MODAL
+================================================================ */
+#apikey-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.65);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+  padding: 24px;
+}
+#apikey-overlay.hidden { display: none; }
+
+#apikey-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 32px 28px 24px;
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+#apikey-title {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.apikey-note {
+  font-size: .82rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  border-radius: 10px;
+  border-left: 3px solid var(--accent);
+}
+
+.apikey-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.apikey-field label {
+  font-size: .8rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.apikey-field input {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: .9rem;
+  color: var(--text);
+  font-family: 'DM Mono', monospace;
+  outline: none;
+  transition: border-color .2s;
+}
+.apikey-field input:focus {
+  border-color: var(--accent);
+}
+
+.apikey-link {
+  font-size: .78rem;
+  color: var(--accent);
+  text-decoration: none;
+  align-self: flex-start;
+}
+.apikey-link:hover { text-decoration: underline; }
+
+.apikey-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.apikey-actions button {
+  padding: 9px 20px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  font-size: .88rem;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  transition: background .2s, color .2s;
+}
+.apikey-actions button:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.apikey-confirm-btn {
+  background: var(--accent) !important;
+  color: #000 !important;
+  border-color: var(--accent) !important;
+}
+.apikey-confirm-btn:hover {
+  opacity: .88;
+}
+
+/* ================================================================
    FOOTER — canonical rules (all previous footer blocks removed)
 ================================================================ */
 footer {

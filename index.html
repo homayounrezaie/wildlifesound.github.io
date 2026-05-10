@@ -138,6 +138,28 @@
     </div>
   </div>
 
+  <!-- ── API KEY MODAL ─────────────────────────────────────────────── -->
+  <div id="apikey-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="apikey-title">
+    <div id="apikey-modal">
+      <div id="apikey-title">Enter your API keys</div>
+      <p class="apikey-note">Keys are used only in your browser and deleted when you leave this page. Nothing is stored.</p>
+      <div class="apikey-field">
+        <label for="input-gemini-key">Gemini API key</label>
+        <input id="input-gemini-key" type="password" placeholder="AIza…" autocomplete="off" spellcheck="false" />
+        <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" class="apikey-link">Get a free Gemini key →</a>
+      </div>
+      <div class="apikey-field">
+        <label for="input-hf-token">Hugging Face token</label>
+        <input id="input-hf-token" type="password" placeholder="hf_…" autocomplete="off" spellcheck="false" />
+        <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener" class="apikey-link">Get a free HuggingFace token →</a>
+      </div>
+      <div class="apikey-actions">
+        <button id="apikey-cancel">Cancel</button>
+        <button id="apikey-confirm" class="apikey-confirm-btn">Start recording</button>
+      </div>
+    </div>
+  </div>
+
   <div id="image-overlay" class="hidden" role="dialog" aria-modal="true" aria-label="Full size species image">
     <button id="image-close" aria-label="Close image">✕</button>
     <img id="image-full" alt="">
