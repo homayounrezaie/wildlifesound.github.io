@@ -255,6 +255,15 @@
     return `${mins}:${String(secs).padStart(2, '0')}`;
   }
 
+  function isNonBlockingModelError(model, message) {
+    return /^BirdNET\//.test(model) && /unavailable on hugging face/i.test(message || '');
+  }
+
+  function blockingModelFailures() {
+    return [...liveModelErrors.entries()]
+      .filter(([model, message]) => !isNonBlockingModelError(model, message));
+  }
+
   /* ================================================================
      RECORDING
   ================================================================ */
@@ -392,12 +401,19 @@
       stopLivePanel();
 
       if (liveResultsMap.size === 0) {
-        const failures = [...liveModelErrors.entries()].map(([model, msg]) => `${model}: ${msg}`).join('\n');
-        appendErrorCard('species-grid',
-          failures ? 'Analysis Failed' : 'No Species Detected',
-          failures || 'No biological species detected. Try recording outdoors near vegetation at dawn or dusk.');
+        const failures = blockingModelFailures();
+        const failureText = failures.map(([model, msg]) => `${model}: ${msg}`).join('\n');
+        const onlyUnavailableBirdnet = liveModelErrors.size > 0 && failures.length === 0;
+        const title = failureText
+          ? (failureText.toLowerCase().includes('overload') || failureText.includes('503') ? 'Gemini Busy' : 'Analysis Failed')
+          : 'No Species Detected';
+        const message = failureText ||
+          (onlyUnavailableBirdnet
+            ? 'BirdNET is currently unavailable on Hugging Face. Try Gemini again, or upload a clearer clip.'
+            : 'No biological species detected. Try recording outdoors near vegetation at dawn or dusk.');
+        appendErrorCard('species-grid', title, message);
         renderLiveDetections('empty');
-        setPanelStatus(failures ? 'Analysis failed' : 'No detection', failures ? 'error' : 'empty');
+        setPanelStatus(failureText ? title : 'No detection', failureText ? 'error' : 'empty');
       } else {
         detectedSpecies = [...liveResultsMap.values()];
         setPanelStatus('Results ready', 'results');
@@ -616,8 +632,9 @@
           group.keys.map(key => liveModelErrors.get(key)).find(Boolean) ||
           (group.type === 'birdnet' ? liveModelErrors.get('BirdNET') : null);
         const waitingText = activeChunkAnalyses.size ? 'Analyzing current chunk...' : 'Listening for matches...';
+        const mutedClass = errorText && /unavailable on hugging face/i.test(errorText) ? ' lp-waiting--muted' : '';
         html += `<div class="lp-waiting">
-          <span class="lp-waiting-dot"></span> ${esc(errorText || waitingText)}
+          <span class="lp-waiting-dot"></span> <span class="${mutedClass.trim()}">${esc(errorText || waitingText)}</span>
         </div>`;
       } else {
         for (const sp of items) {

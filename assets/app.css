@@ -2821,6 +2821,10 @@ footer::before {
   animation: livePulse 2s ease-out infinite;
 }
 
+.lp-waiting--muted {
+  opacity: .72;
+}
+
 /* ── Species row ── */
 .lp-row {
   display: flex;
