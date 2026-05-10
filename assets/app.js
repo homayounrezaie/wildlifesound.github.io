@@ -34,6 +34,7 @@
   let chunkLastAt       = 0;           // performance.now() when last chunk was sent
   let chunkElapsedAt    = 0;           // recording seconds when last chunk was sent
   let chunkMime         = '';          // mime type of recording
+  let recordingStartedAt = 0;
   const activeChunkAnalyses = new Set();
   let liveModelErrors   = new Map();   // key: model group label -> latest visible failure
 
@@ -92,8 +93,12 @@
   ================================================================ */
   function resizeCanvas() {
     const c = $('waveform-canvas');
-    c.width  = c.offsetWidth;
-    c.height = c.offsetHeight || 110;
+    if (!c) return;
+    const dpr = window.devicePixelRatio || 1;
+    const cssWidth = Math.max(320, c.offsetWidth || c.parentElement?.offsetWidth || 420);
+    const cssHeight = Math.max(82, c.offsetHeight || 110);
+    c.width = Math.round(cssWidth * dpr);
+    c.height = Math.round(cssHeight * dpr);
   }
 
   function drawSpectrogram() {
@@ -119,6 +124,7 @@
       }
       const w = canvas.width;
       const h = canvas.height;
+      if (w < 2 || h < 2) return;
 
       // Shift existing image one pixel to the right (left-to-right scroll)
       const img = ctx.getImageData(0, 0, w - 1, h);
@@ -145,6 +151,20 @@
         ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
         ctx.fillRect(0, y, 1, binH);
       }
+
+      // Overlay a simple waveform trace so users get immediate visual feedback
+      // even in quiet rooms where the spectrogram is faint.
+      analyserNode.getByteTimeDomainData(timeBuf);
+      ctx.strokeStyle = 'rgba(95,184,255,.62)';
+      ctx.lineWidth = Math.max(1, window.devicePixelRatio || 1);
+      ctx.beginPath();
+      for (let x = 0; x < w; x++) {
+        const sample = timeBuf[Math.floor((x / w) * timeBuf.length)] / 255;
+        const y = sample * h;
+        if (x === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
     }
     frame();
   }
@@ -255,6 +275,7 @@
 
     // Web Audio (waveform only — analyser not connected to destination)
     audioCtx      = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
     const src     = audioCtx.createMediaStreamSource(stream);
     analyserNode  = audioCtx.createAnalyser();
     analyserNode.fftSize = 2048;
@@ -270,6 +291,7 @@
     liveModelErrors.clear();
     chunkWindowChunks = [];
     chunkLastAt       = performance.now();
+    recordingStartedAt = chunkLastAt;
     chunkElapsedAt    = 0;
     chunkMime         = mime;
     activeChunkAnalyses.clear();
@@ -310,6 +332,13 @@
       if (activeChunkAnalyses.size) {
         setPanelStatus('Finishing analysis', 'analyzing');
         await Promise.allSettled([...activeChunkAnalyses]);
+      }
+
+      if (liveResultsMap.size === 0 && fullBlob.size > 0) {
+        const fullDuration = Math.max(1, Math.round((performance.now() - recordingStartedAt) / 1000));
+        setPanelStatus('Checking full recording', 'analyzing');
+        await analyseChunk(fullBlob, fullMime, 0, fullDuration);
+        if (activeChunkAnalyses.size) await Promise.allSettled([...activeChunkAnalyses]);
       }
 
       // Finalize panel
@@ -442,8 +471,17 @@
 
       const birdnetTask = callBirdNet(b64, mimeType)
         .then(result => {
-          liveModelErrors.delete('BirdNET');
-          mergeSpecies(birdnetToSpecies(result?.results || []));
+          const results = result?.results || [];
+          const species = birdnetToSpecies(results);
+          for (const modelResult of results) {
+            if (modelResult.error && !(modelResult.detections || []).length) {
+              liveModelErrors.set(modelResult.model, modelResult.error);
+            } else {
+              liveModelErrors.delete(modelResult.model);
+            }
+          }
+          if (species.length) liveModelErrors.delete('BirdNET');
+          mergeSpecies(species);
         })
         .catch(err => {
           liveModelErrors.set('BirdNET', err.message || 'Unable to analyse audio.');
@@ -517,6 +555,7 @@
 
       if (!items.length) {
         const errorText = liveModelErrors.get(group.label) ||
+          group.keys.map(key => liveModelErrors.get(key)).find(Boolean) ||
           (group.type === 'birdnet' ? liveModelErrors.get('BirdNET') : null);
         const waitingText = activeChunkAnalyses.size ? 'Analyzing current chunk...' : 'Listening for matches...';
         html += `<div class="lp-waiting">
