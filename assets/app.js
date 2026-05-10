@@ -27,6 +27,13 @@
   let replayObjectURL   = null;
   let lastSignalUpdate  = 0;
 
+  // True when running locally with server-side API routes available
+  const IS_LOCAL = ['localhost', '127.0.0.1', ''].includes(window.location.hostname);
+
+  // User-supplied API keys (used only when IS_LOCAL is false)
+  let _geminiKey = '';
+  let _hfToken   = '';
+
   // Live chunk detection state
   let liveResultsMap    = new Map();  // key: 'model::name' → species obj
   let chunkWindowChunks = [];          // audio chunks for current 10s window
@@ -679,6 +686,22 @@ Respond ONLY in this exact JSON format, no other text:
 If no biological species detected, return empty species array.`;
 
   async function callGemini(base64Audio, mimeType) {
+    // Local dev: use server-side proxy which reads GEMINI_API_KEY from .env.local
+    if (IS_LOCAL) {
+      const body = {
+        contents: [{ parts: [{ text: GEMINI_PROMPT_BASE }, { inline_data: { mime_type: mimeType || 'audio/webm', data: base64Audio } }] }],
+        generationConfig: { temperature: 0.1 }
+      };
+      const res = await fetch('/api/analyse', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error?.message || `HTTP ${res.status}`); }
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || 'Gemini error');
+      let raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!raw) throw new Error('Gemini returned empty response.');
+      raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+      return JSON.parse(raw);
+    }
+
     const key = _geminiKey;
     if (!key) throw new Error('No Gemini API key provided.');
 
@@ -747,6 +770,19 @@ If no biological species detected, return empty species array.`;
      Gemini will resolve labels to proper common/scientific names.
   ================================================================ */
   async function callBirdNet(base64Audio, mimeType) {
+    // Local dev: use server-side proxy which reads HF_TOKEN from .env.local
+    if (IS_LOCAL) {
+      const res = await fetch('/api/birdnet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audio: base64Audio, mimeType }) });
+      if (res.status === 503) {
+        const d = await res.json().catch(() => ({}));
+        await new Promise(r => setTimeout(r, Math.min((d.retry_after || 20) * 1000, 30_000)));
+        const res2 = await fetch('/api/birdnet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audio: base64Audio, mimeType }) });
+        return res2.json().catch(() => ({ results: [] }));
+      }
+      if (!res.ok) throw new Error(`BirdNET HTTP ${res.status}`);
+      return res.json().catch(() => ({ results: [] }));
+    }
+
     const token = _hfToken;
     if (!token) return { results: [] };
 
@@ -869,6 +905,59 @@ If no biological species detected, return empty species array.`;
     }
   }
 
+  async function fetchXenoRecordings(scientificName, commonName) {
+    if (!IS_LOCAL) return [];
+    const params = new URLSearchParams();
+    if (scientificName) params.set('scientific', scientificName);
+    if (commonName) params.set('common', commonName);
+    if (!params.toString()) return [];
+
+    const res = await fetch(`/api/xeno?${params.toString()}`);
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => ({}));
+    return Array.isArray(data.recordings) ? data.recordings : [];
+  }
+
+  async function enrichSpeciesReference(sp) {
+    const [image, recordings] = await Promise.all([
+      fetchSpeciesImage(sp.scientific_name, sp._raw_label || sp.common_name).catch(() => null),
+      fetchXenoRecordings(sp.scientific_name, sp.common_name).catch(() => []),
+    ]);
+    if (image) sp.image = image;
+    sp.xenoRecordings = recordings;
+  }
+
+  function renderXenoSummary(sp) {
+    const count = sp.xenoRecordings?.length || 0;
+    if (!count) return '';
+    return `<span class="source-badge source-badge--xeno">XC ${count}</span>`;
+  }
+
+  function renderXenoDetail(sp) {
+    const recordings = sp.xenoRecordings || [];
+    if (!recordings.length) return '';
+
+    const rows = recordings.map(rec => `
+      <div class="xeno-item">
+        <audio class="xeno-audio" controls preload="none" src="${esc(rec.file)}"></audio>
+        <div class="xeno-meta">
+          <div class="xeno-title">${esc(rec.type || 'reference sound')} ${rec.quality ? `<span>Quality ${esc(rec.quality)}</span>` : ''}</div>
+          <div class="xeno-sub">${esc([rec.country, rec.location].filter(Boolean).join(' - '))}</div>
+          <div class="xeno-credit">Recorded by ${esc(rec.recordist || 'Xeno-canto contributor')}</div>
+        </div>
+        ${rec.sonogram ? `<img class="xeno-sono" src="${esc(rec.sonogram)}" alt="Xeno-canto sonogram">` : ''}
+        <div class="xeno-links">
+          ${rec.url ? `<a href="${esc(rec.url)}" target="_blank" rel="noopener noreferrer">Xeno-canto</a>` : ''}
+          ${rec.license ? `<a href="${esc(rec.license)}" target="_blank" rel="noopener noreferrer">License</a>` : ''}
+        </div>
+      </div>`).join('');
+
+    return `<div class="xeno-section">
+      <div class="xeno-heading">Reference sounds</div>
+      ${rows}
+    </div>`;
+  }
+
   const BIRD_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M22 6c0 0-4.5 1.5-7 2L12 4l-2 2-4-1s2 4 4 5H4l2 3h14c2-1 3-3 2-7z"/></svg>`;
 
@@ -951,6 +1040,7 @@ If no biological species detected, return empty species array.`;
         <div class="species-badges">
           <span class="type-badge">${esc(type)}</span>
           ${sourceBadge}
+          ${renderXenoSummary(sp)}
         </div>
         <div class="prob-bar-wrap">
           <div class="prob-bar-track"><div class="prob-bar-fill ${cls}" style="width:0%"></div></div>
@@ -1156,6 +1246,10 @@ If no biological species detected, return empty species array.`;
   }
 
   async function handleUploadedFile(file) {
+    if (!IS_LOCAL && !_geminiKey && !_hfToken) {
+      showApiKeyModal(() => handleUploadedFile(file));
+      return;
+    }
     // Validate type
     const mime = file.type || '';
     const ext  = file.name.split('.').pop().toLowerCase();
@@ -1281,13 +1375,10 @@ If no biological species detected, return empty species array.`;
       $('species-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 200);
 
-    // Fetch Wikipedia photos only.
+    // Fetch Wikipedia photos and Xeno-canto reference sounds.
     await Promise.allSettled(
       detectedSpecies.map(async sp => {
-        const imgResult = await Promise.resolve(fetchSpeciesImage(sp.scientific_name, sp._raw_label || sp.common_name))
-          .then(value => ({ status: 'fulfilled', value }))
-          .catch(reason => ({ status: 'rejected', reason }));
-        sp.image = imgResult.status === 'fulfilled' ? imgResult.value : null;
+        await enrichSpeciesReference(sp);
         updateCard(sp);
         renderLiveDetections('results', detectedSpecies);
       })
@@ -1535,10 +1626,48 @@ If no biological species detected, return empty species array.`;
     window.addEventListener('resize', resizeCanvas);
 
     // Record button
+    // API key modal (shown only when not running locally)
+    function showApiKeyModal(onConfirm) {
+      const overlay = $('apikey-overlay');
+      if (!overlay) { onConfirm(); return; }
+      overlay.classList.remove('hidden');
+      $('input-gemini-key').value = _geminiKey;
+      $('input-hf-token').value   = _hfToken;
+      $('input-gemini-key').focus();
+
+      function close() {
+        overlay.classList.add('hidden');
+        $('apikey-confirm').removeEventListener('click', confirm);
+        $('apikey-cancel').removeEventListener('click', cancel);
+        overlay.removeEventListener('click', backdropClose);
+      }
+      function confirm() {
+        const gk = $('input-gemini-key').value.trim();
+        const hf = $('input-hf-token').value.trim();
+        if (!gk && !hf) { toast('Enter at least one API key.', 'error'); return; }
+        _geminiKey = gk;
+        _hfToken   = hf;
+        close();
+        onConfirm();
+      }
+      function cancel() { close(); }
+      function backdropClose(e) { if (e.target === overlay) cancel(); }
+
+      $('apikey-confirm').addEventListener('click', confirm);
+      $('apikey-cancel').addEventListener('click', cancel);
+      overlay.addEventListener('click', backdropClose);
+    }
+
+    window.addEventListener('pagehide', () => { _geminiKey = ''; _hfToken = ''; });
+
     $('record-btn').addEventListener('click', () => {
       if (isProcessing) return;
       if (isRecording) { stopRecording(); return; }
-      startRecording();
+      if (!IS_LOCAL && !_geminiKey && !_hfToken) {
+        showApiKeyModal(() => startRecording());
+      } else {
+        startRecording();
+      }
     });
 
   }
