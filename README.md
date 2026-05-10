@@ -35,6 +35,12 @@ npm run dev
 
 Open `http://localhost:3000`.
 
+## Test Sounds
+
+Add sample clips to the `sounds/` folder, then use the app's upload button to test them.
+
+Supported formats: `.mp3`, `.wav`, `.m4a`, `.webm`, `.ogg`, `.flac`.
+
 ## Notes
 
 - `GEMINI_API_KEY` powers Gemini wildlife detection.
