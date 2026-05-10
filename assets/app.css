@@ -2581,6 +2581,14 @@ body {
   border-radius: 10px;
   border-left: 3px solid var(--accent);
 }
+.apikey-note code {
+  font-family: 'DM Mono', monospace;
+  font-size: .8em;
+  background: var(--border);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--text);
+}
 
 .apikey-field {
   display: flex;

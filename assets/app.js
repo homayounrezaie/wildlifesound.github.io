@@ -27,10 +27,6 @@
   let replayObjectURL   = null;
   let lastSignalUpdate  = 0;
 
-  // User-supplied API keys (memory only, cleared on page unload)
-  let _geminiKey = '';
-  let _hfToken   = '';
-
   // Live chunk detection state
   let liveResultsMap    = new Map();  // key: 'model::name' → species obj
   let chunkWindowChunks = [];          // audio chunks for current 10s window
@@ -53,39 +49,6 @@
     return String(str)
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
       .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
-  }
-
-  /* ================================================================
-     API KEY MODAL
-  ================================================================ */
-  function showApiKeyModal(onConfirm) {
-    const overlay = $('apikey-overlay');
-    overlay.classList.remove('hidden');
-    $('input-gemini-key').value = _geminiKey;
-    $('input-hf-token').value   = _hfToken;
-    $('input-gemini-key').focus();
-
-    function close() {
-      overlay.classList.add('hidden');
-      $('apikey-confirm').removeEventListener('click', confirm);
-      $('apikey-cancel').removeEventListener('click', cancel);
-      overlay.removeEventListener('click', backdropClose);
-    }
-    function confirm() {
-      const gk = $('input-gemini-key').value.trim();
-      const hf = $('input-hf-token').value.trim();
-      if (!gk && !hf) { toast('Enter at least one API key.', 'error'); return; }
-      _geminiKey = gk;
-      _hfToken   = hf;
-      close();
-      onConfirm();
-    }
-    function cancel() { close(); }
-    function backdropClose(e) { if (e.target === overlay) cancel(); }
-
-    $('apikey-confirm').addEventListener('click', confirm);
-    $('apikey-cancel').addEventListener('click', cancel);
-    overlay.addEventListener('click', backdropClose);
   }
 
   /* ================================================================
@@ -646,7 +609,13 @@ If no biological species detected, return empty species array.`;
   async function callGemini(base64Audio, mimeType) {
     const key = _geminiKey;
     if (!key) throw new Error('No Gemini API key provided.');
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${key}`;
+
+    const GEMINI_MODELS = [
+      'gemini-2.5-flash',
+      'gemini-2.0-flash-lite',
+      'gemini-1.5-flash',
+    ];
+
     const body = {
       contents: [{
         parts: [
@@ -657,43 +626,56 @@ If no biological species detected, return empty species array.`;
       generationConfig: { temperature: 0.1 }
     };
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
+    let lastErr;
+    for (const model of GEMINI_MODELS) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+      let res;
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+      } catch (e) { lastErr = e; continue; }
 
-    if (!res.ok) {
-      let msg = `HTTP ${res.status}`;
-      try { const d = await res.json(); msg += ': ' + (d.error?.message || res.statusText); } catch {}
-      throw new Error(msg);
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try { const d = await res.json(); msg += ': ' + (d.error?.message || res.statusText); } catch {}
+        lastErr = new Error(msg);
+        if (res.status === 429 || res.status === 503) continue; // try next model
+        throw lastErr;
+      }
+
+      const data = await res.json();
+
+      // Gemini can return HTTP 200 with an error body
+      if (data.error) {
+        const msg = data.error.message || 'Gemini error';
+        const err = new Error(msg);
+        if (msg.toLowerCase().includes('overload') || msg.toLowerCase().includes('503'))
+          err.isOverload = true;
+        lastErr = err;
+        if (err.isOverload) continue;
+        throw err;
+      }
+
+      let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!rawText) { lastErr = new Error('Gemini returned an empty response.'); continue; }
+
+      // Strip markdown fences
+      rawText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+
+      let parsed;
+      try { parsed = JSON.parse(rawText); }
+      catch (e) {
+        const err  = new Error('JSON parse failed');
+        err.raw    = rawText;
+        throw err;
+      }
+      return parsed;
     }
 
-    const data  = await res.json();
-
-    // Gemini can return HTTP 200 with an error body
-    if (data.error) {
-      const msg = data.error.message || 'Gemini error';
-      const err = new Error(msg);
-      if (msg.toLowerCase().includes('overload') || msg.toLowerCase().includes('503'))
-        err.isOverload = true;
-      throw err;
-    }
-
-    let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!rawText) throw new Error('Gemini returned an empty response.');
-
-    // Strip markdown fences
-    rawText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-
-    let parsed;
-    try { parsed = JSON.parse(rawText); }
-    catch (e) {
-      const err  = new Error('JSON parse failed');
-      err.raw    = rawText;
-      throw err;
-    }
-    return parsed;
+    throw lastErr || new Error('All Gemini models failed.');
   }
 
   /* ================================================================
