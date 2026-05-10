@@ -50,3 +50,4 @@ Supported formats: `.mp3`, `.wav`, `.m4a`, `.webm`, `.ogg`, `.flac`.
 - `XENO_CANTO_API_KEY` powers verified reference recordings and sonograms.
 - Keep tokens server-side in `.env.local`. Do not put secret keys in frontend files.
 - To let public users share your keys, host the app with the included API routes. A static GitHub Pages deploy cannot hide shared keys.
+- If the frontend is hosted separately from the API, set `window.WILDLIFE_API_BASE` to the API host before loading `assets/app.js`.

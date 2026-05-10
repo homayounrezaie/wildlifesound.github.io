@@ -27,12 +27,16 @@
   let replayObjectURL   = null;
   let lastSignalUpdate  = 0;
 
-  // True when running locally with server-side API routes available
-  const IS_LOCAL = ['localhost', '127.0.0.1', ''].includes(window.location.hostname);
+  // Server-side API routes are required because model/API keys must not live in browser code.
+  const HAS_LOCAL_API = window.location.protocol.startsWith('http') &&
+    ['localhost', '127.0.0.1'].includes(window.location.hostname);
+  const API_BASE = (window.WILDLIFE_API_BASE || '').replace(/\/$/, '');
 
-  // User-supplied API keys (used only when IS_LOCAL is false)
-  let _geminiKey = '';
-  let _hfToken   = '';
+  function apiUrl(path) {
+    if (HAS_LOCAL_API) return path;
+    if (API_BASE) return `${API_BASE}${path}`;
+    throw new Error('Detection needs an API server. Run npm run dev locally, or deploy the API routes and set window.WILDLIFE_API_BASE.');
+  }
 
   // Live chunk detection state
   let liveResultsMap    = new Map();  // key: 'model::name' → species obj
@@ -691,26 +695,6 @@ Respond ONLY in this exact JSON format, no other text:
 If no biological species detected, return empty species array.`;
 
   async function callGemini(base64Audio, mimeType) {
-    // Local dev: use server-side proxy which reads GEMINI_API_KEY from .env.local
-    if (IS_LOCAL) {
-      const body = {
-        contents: [{ parts: [{ text: GEMINI_PROMPT_BASE }, { inline_data: { mime_type: mimeType || 'audio/webm', data: base64Audio } }] }],
-        generationConfig: { temperature: 0.1 }
-      };
-      const res = await fetch('/api/analyse', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error?.message || `HTTP ${res.status}`); }
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message || 'Gemini error');
-      let raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!raw) throw new Error('Gemini returned empty response.');
-      raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-      return JSON.parse(raw);
-    }
-
-    const key = _geminiKey;
-    if (!key) throw new Error('No Gemini API key provided.');
-
-    const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'];
     const safeMime = (mimeType || 'audio/webm').split(';')[0];
     const body = {
       contents: [{
@@ -722,51 +706,31 @@ If no biological species detected, return empty species array.`;
       generationConfig: { temperature: 0.1 }
     };
 
-    let lastErr;
-    for (const model of GEMINI_MODELS) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-      let res;
-      try {
-        res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-      } catch (e) { lastErr = e; continue; }
+    const res = await fetch(apiUrl('/api/analyse'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
 
-      if (!res.ok) {
-        let msg = `HTTP ${res.status}`;
-        try { const d = await res.json(); msg += ': ' + (d.error?.message || res.statusText); } catch {}
-        lastErr = new Error(msg);
-        if (res.status === 429 || res.status === 503) continue;
-        throw lastErr;
-      }
-
-      const data = await res.json();
-
-      if (data.error) {
-        const msg = data.error.message || 'Gemini error';
-        const err = new Error(msg);
-        if (msg.toLowerCase().includes('overload') || msg.toLowerCase().includes('503')) err.isOverload = true;
-        lastErr = err;
-        if (err.isOverload) continue;
-        throw err;
-      }
-
-      let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!rawText) { lastErr = new Error('Gemini returned an empty response.'); continue; }
-      rawText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-
-      try {
-        return JSON.parse(rawText);
-      } catch {
-        const err = new Error('JSON parse failed');
-        err.raw = rawText;
-        throw err;
-      }
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { const d = await res.json(); msg += ': ' + (d.error?.message || res.statusText); } catch {}
+      throw new Error(msg);
     }
 
-    throw lastErr || new Error('All Gemini models failed.');
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message || 'Gemini error');
+    let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!rawText) throw new Error('Gemini returned empty response.');
+    rawText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+
+    try {
+      return JSON.parse(rawText);
+    } catch {
+      const err = new Error('JSON parse failed');
+      err.raw = rawText;
+      throw err;
+    }
   }
 
   /* ================================================================
@@ -776,77 +740,21 @@ If no biological species detected, return empty species array.`;
      Gemini will resolve labels to proper common/scientific names.
   ================================================================ */
   async function callBirdNet(base64Audio, mimeType) {
-    // Local dev: use server-side proxy which reads HF_TOKEN from .env.local
-    if (IS_LOCAL) {
-      const res = await fetch('/api/birdnet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audio: base64Audio, mimeType }) });
-      if (res.status === 503) {
-        const d = await res.json().catch(() => ({}));
-        await new Promise(r => setTimeout(r, Math.min((d.retry_after || 20) * 1000, 30_000)));
-        const res2 = await fetch('/api/birdnet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audio: base64Audio, mimeType }) });
-        return res2.json().catch(() => ({ results: [] }));
-      }
-      if (!res.ok) throw new Error(`BirdNET HTTP ${res.status}`);
-      return res.json().catch(() => ({ results: [] }));
+    const post = () => fetch(apiUrl('/api/birdnet'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audio: base64Audio, mimeType }),
+    });
+
+    let res = await post();
+    if (res.status === 503) {
+      const d = await res.json().catch(() => ({}));
+      await new Promise(r => setTimeout(r, Math.min((d.retry_after || 20) * 1000, 30_000)));
+      res = await post();
     }
 
-    const token = _hfToken;
-    if (!token) return { results: [] };
-
-    const HF_BASE = 'https://api-inference.huggingface.co/models';
-    const MODELS = [
-      { id: 'DBD-research-group/AST-BirdSet-XCL', source: 'BirdNET/AST' },
-      { id: 'dima806/bird_sounds_classification',  source: 'BirdNET/W2V' },
-    ];
-
-    // Decode base64 → Blob (simpler CORS preflight than raw binary)
-    const binary = atob(base64Audio);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    // Strip codec params from MIME — HF only needs the base type
-    const baseMime = (mimeType || 'audio/webm').split(';')[0];
-    const audioBlob = new Blob([bytes], { type: baseMime });
-
-    async function queryModel(model) {
-      async function attempt() {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 35_000);
-        let res;
-        try {
-          res = await fetch(`${HF_BASE}/${model.id}`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': baseMime,
-            },
-            body: audioBlob,
-            signal: controller.signal,
-          });
-        } finally {
-          clearTimeout(timer);
-        }
-
-        if (res.status === 503) {
-          const d = await res.json().catch(() => ({}));
-          await new Promise(r => setTimeout(r, Math.min((d.estimated_time || 20) * 1000, 30_000)));
-          return attempt();
-        }
-
-        if (!res.ok) return { model: model.source, error: `HTTP ${res.status}`, detections: [] };
-
-        const raw = await res.json().catch(() => []);
-        const detections = (Array.isArray(raw) ? raw : [])
-          .filter(d => d.score > 0.01)
-          .slice(0, 8)
-          .map(d => ({ label: d.label, score: Math.round(d.score * 100), source: model.source }));
-        return { model: model.source, detections };
-      }
-
-      try { return await attempt(); }
-      catch (e) { return { model: model.source, error: e.message, detections: [] }; }
-    }
-
-    const results = await Promise.all(MODELS.map(m => queryModel(m)));
-    return { results };
+    if (!res.ok) throw new Error(`BirdNET HTTP ${res.status}`);
+    return res.json().catch(() => ({ results: [] }));
   }
 
   /* Format a raw BirdNet label into a readable display name.
@@ -921,13 +829,12 @@ If no biological species detected, return empty species array.`;
   }
 
   async function fetchXenoRecordings(scientificName, commonName) {
-    if (!IS_LOCAL) return [];
     const params = new URLSearchParams();
     if (scientificName) params.set('scientific', scientificName);
     if (commonName) params.set('common', commonName);
     if (!params.toString()) return [];
 
-    const res = await fetch(`/api/xeno?${params.toString()}`);
+    const res = await fetch(apiUrl(`/api/xeno?${params.toString()}`));
     if (!res.ok) return [];
     const data = await res.json().catch(() => ({}));
     return Array.isArray(data.recordings) ? data.recordings : [];
@@ -1261,10 +1168,6 @@ If no biological species detected, return empty species array.`;
   }
 
   async function handleUploadedFile(file) {
-    if (!IS_LOCAL && !_geminiKey && !_hfToken) {
-      showApiKeyModal(() => handleUploadedFile(file));
-      return;
-    }
     // Validate type
     const mime = file.type || '';
     const ext  = file.name.split('.').pop().toLowerCase();
@@ -1641,49 +1544,10 @@ If no biological species detected, return empty species array.`;
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
 
-    // Record button
-    // API key modal (shown only when not running locally)
-    function showApiKeyModal(onConfirm) {
-      const overlay = $('apikey-overlay');
-      if (!overlay) { onConfirm(); return; }
-      overlay.classList.remove('hidden');
-      $('input-gemini-key').value = _geminiKey;
-      $('input-hf-token').value   = _hfToken;
-      $('input-gemini-key').focus();
-
-      function close() {
-        overlay.classList.add('hidden');
-        $('apikey-confirm').removeEventListener('click', confirm);
-        $('apikey-cancel').removeEventListener('click', cancel);
-        overlay.removeEventListener('click', backdropClose);
-      }
-      function confirm() {
-        const gk = $('input-gemini-key').value.trim();
-        const hf = $('input-hf-token').value.trim();
-        if (!gk && !hf) { toast('Enter at least one API key.', 'error'); return; }
-        _geminiKey = gk;
-        _hfToken   = hf;
-        close();
-        onConfirm();
-      }
-      function cancel() { close(); }
-      function backdropClose(e) { if (e.target === overlay) cancel(); }
-
-      $('apikey-confirm').addEventListener('click', confirm);
-      $('apikey-cancel').addEventListener('click', cancel);
-      overlay.addEventListener('click', backdropClose);
-    }
-
-    window.addEventListener('pagehide', () => { _geminiKey = ''; _hfToken = ''; });
-
     $('record-btn').addEventListener('click', () => {
       if (isProcessing) return;
       if (isRecording) { stopRecording(); return; }
-      if (!IS_LOCAL && !_geminiKey && !_hfToken) {
-        showApiKeyModal(() => startRecording());
-      } else {
-        startRecording();
-      }
+      startRecording();
     });
 
   }
