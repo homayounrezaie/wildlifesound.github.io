@@ -10,7 +10,7 @@ Wildlife is often easier to hear than see. This app turns short field recordings
 
 1. Record audio for up to 60 seconds, or upload an audio file.
 2. While recording, the app analyzes each 10-second chunk.
-3. Multiple Gemini models analyze the sound for birds, frogs, insects, mammals, and other wildlife.
+3. Gemini 2.5 Flash Lite and BirdNET analyze the sound.
 4. Results are grouped by model, and duplicate species inside each model keep the best score.
 5. Species images are loaded from the Wikipedia REST API.
 6. Reference recordings are loaded from Xeno-canto for comparison.
@@ -43,7 +43,7 @@ Supported formats: `.mp3`, `.wav`, `.m4a`, `.webm`, `.ogg`, `.flac`.
 ## Notes
 
 - `GEMINI_API_KEY` powers Gemini wildlife detection.
-- `HF_TOKEN` is reserved for future Hugging Face models. The old BirdNET Hugging Face models are currently unavailable through HF Inference.
+- `HF_TOKEN` powers the BirdNET Hugging Face model section.
 - `XENO_CANTO_API_KEY` powers verified reference recordings and sonograms.
 - Keep tokens server-side in `.env.local`. Do not put secret keys in frontend files.
 - To let public users share your keys, host the app with the included API routes. A static GitHub Pages deploy cannot hide shared keys.

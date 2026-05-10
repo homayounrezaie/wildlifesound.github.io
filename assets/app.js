@@ -12,10 +12,6 @@
   const MAX_RECORDING_SECONDS = 60;
   const GEMINI_MODEL_GROUPS = [
     { key: 'Gemini 2.5 Flash Lite', desc: 'Fast Gemini wildlife detector' },
-    { key: 'Gemini 2.5 Flash', desc: 'Higher-capacity Gemini detector' },
-    { key: 'Gemini 2.0 Flash', desc: 'Balanced Gemini detector' },
-    { key: 'Gemini 2.0 Flash Lite', desc: 'Fallback Gemini detector' },
-    { key: 'Gemini AI', desc: 'Gemini wildlife detector' },
   ];
 
   /* ================================================================
@@ -548,6 +544,27 @@
         ).then(() => renderLivePanelBody());
       };
 
+      const birdnetTask = callBirdNet(b64, mimeType)
+        .then(result => {
+          const results = result?.results || [];
+          const species = birdnetToSpecies(results);
+          for (const modelResult of results) {
+            if (modelResult.unavailable) {
+              liveModelErrors.set(modelResult.model, 'Unavailable on Hugging Face');
+            } else if (modelResult.error && !(modelResult.detections || []).length) {
+              liveModelErrors.set(modelResult.model, modelResult.error);
+            } else {
+              liveModelErrors.delete(modelResult.model);
+            }
+          }
+          if (species.length) liveModelErrors.delete('BirdNET');
+          mergeSpecies(species);
+        })
+        .catch(err => {
+          liveModelErrors.set('BirdNET', err.message || 'Unable to analyse audio.');
+          renderLivePanelBody();
+        });
+
       const geminiTask = callGemini(b64, mimeType)
         .then(result => {
           liveModelErrors.delete('Gemini AI');
@@ -563,7 +580,7 @@
           renderLivePanelBody();
         });
 
-      await Promise.allSettled([geminiTask]);
+      await Promise.allSettled([geminiTask, birdnetTask]);
     } catch {
       // Live chunk failures should not stop recording.
     }
@@ -574,6 +591,7 @@
   ================================================================ */
   const LIVE_MODEL_GROUPS = [
     ...GEMINI_MODEL_GROUPS.map(group => ({ keys: [group.key], label: group.key, type: 'gemini' })),
+    { keys: ['BirdNET/AST', 'BirdNET/W2V', 'DBD-research-group/AST-BirdSet-XCL', 'dima806/bird_sounds_classification'], label: 'BirdNET', type: 'birdnet' },
   ];
 
   function startLivePanel() {
@@ -1334,9 +1352,13 @@ If no biological species detected, return empty species array.`;
       return;
     }
 
-    const [geminiResult] = await Promise.allSettled([
+    const [birdnetRaw, geminiResult] = await Promise.allSettled([
+      callBirdNet(b64, mimeType),
       callGemini(b64, mimeType),
     ]);
+
+    const birdnetResults = (birdnetRaw.status === 'fulfilled' ? birdnetRaw.value.results : []) || [];
+    const birdnetSpecies = birdnetToSpecies(birdnetResults);
 
     if (geminiResult.status === 'rejected') {
       const err = geminiResult.reason;
@@ -1358,7 +1380,7 @@ If no biological species detected, return empty species array.`;
       _source: 'gemini',
     }));
 
-    const species = [...geminiSpecies];
+    const species = [...geminiSpecies, ...birdnetSpecies];
 
     if (!species.length) {
       appendErrorCard('species-grid', 'No Species Detected',
@@ -1416,6 +1438,13 @@ If no biological species detected, return empty species array.`;
       type:  'gemini',
       icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
     })),
+    {
+      keys:  ['BirdNET/AST', 'BirdNET/W2V', 'DBD-research-group/AST-BirdSet-XCL', 'dima806/bird_sounds_classification'],
+      label: 'BirdNET',
+      desc:  'Bird sound model via Hugging Face',
+      type:  'birdnet',
+      icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 6c0 0-4.5 1.5-7 2L12 4l-2 2-4-1s2 4 4 5H4l2 3h14c2-1 3-3 2-7z"/></svg>`,
+    },
   ];
 
   function renderSpeciesGrid(species) {
