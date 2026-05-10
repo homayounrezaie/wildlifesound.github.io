@@ -1572,7 +1572,7 @@ If no biological species detected, return empty species array.`;
     try {
       const authed = await auth0Client.isAuthenticated();
       if (!authed) {
-        sessionStorage.setItem('lb_pending_idx', String(idx));
+        sessionStorage.setItem('ws_pending_idx', String(idx));
         await auth0Client.loginWithRedirect();
         return;
       }
@@ -1883,9 +1883,9 @@ If no biological species detected, return empty species array.`;
     });
 
     // After Auth0 redirect — resume any pending sighting
-    const pi = sessionStorage.getItem('lb_pending_idx');
+    const pi = sessionStorage.getItem('ws_pending_idx');
     if (pi !== null) {
-      sessionStorage.removeItem('lb_pending_idx');
+      sessionStorage.removeItem('ws_pending_idx');
       toast('You are now signed in. Please click "Log this sighting" again on the species card.', 'success', 6000);
     }
 
