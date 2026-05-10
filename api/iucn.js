@@ -1,5 +1,6 @@
 // Serverless proxy for IUCN Red List API v4.
-// IUCN_API_TOKEN lives in Vercel env vars — never sent to the browser.
+// IUCN_API_TOKEN is optional and can live in .env.local.
+// If it is not configured, the app still works with unknown conservation data.
 //
 // Usage: GET /api/iucn?name=Passer+domesticus
 // Returns: { category, populationTrend, habitat }
@@ -13,8 +14,11 @@ export default async function handler(req, res) {
 
   const token = process.env.IUCN_API_TOKEN;
   if (!token) {
-    return res.status(500).json({
-      error: 'IUCN_API_TOKEN is not set in Vercel → Project Settings → Environment Variables.'
+    return res.status(200).json({
+      category: 'DD',
+      populationTrend: 'Unknown',
+      habitat: null,
+      source: 'fallback'
     });
   }
 

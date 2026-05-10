@@ -1,5 +1,6 @@
 // Serverless proxy for global sightings — reads and writes to Supabase.
-// SUPABASE_URL and SUPABASE_SERVICE_KEY stay in Vercel env vars, never the browser.
+// SUPABASE_URL and SUPABASE_SERVICE_KEY are optional and can live in .env.local.
+// If Supabase is not configured, reads return an empty public map and writes are disabled.
 //
 // GET  /api/sightings        → return all sightings (public, anyone sees the map)
 // POST /api/sightings        → save a new sighting (Auth0-verified users only)
@@ -14,9 +15,12 @@ export default async function handler(req, res) {
   const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
   if (!supabaseUrl || !supabaseKey) {
-    return res.status(500).json({
-      error: 'SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in Vercel → Project Settings → Environment Variables.'
-    });
+    if (req.method === 'GET') return res.status(200).json([]);
+    if (req.method === 'POST') {
+      return res.status(503).json({
+        error: 'Sightings database is not configured. Analysis still works, but logging sightings is disabled.'
+      });
+    }
   }
 
   const sbHeaders = {

@@ -1,4 +1,4 @@
-// Serverless proxy — GEMINI_API_KEY never reaches the browser.
+// Local API proxy — GEMINI_API_KEY never reaches the browser during local dev.
 // Tries multiple models and retries on 429/503 (overload/rate-limit).
 
 const MODELS = [
@@ -19,7 +19,7 @@ export default async function handler(req, res) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
     return res.status(500).json({
-      error: { message: 'GEMINI_API_KEY is not set in Vercel → Project Settings → Environment Variables.' }
+      error: { message: 'GEMINI_API_KEY is not set. Add it to .env.local and restart the local server.' }
     });
   }
 

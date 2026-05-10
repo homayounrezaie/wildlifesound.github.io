@@ -1,0 +1,9 @@
+{
+  "name": "wildlife-sound",
+  "type": "module",
+  "scripts": {
+    "dev": "node local-server.mjs",
+    "start": "node local-server.mjs"
+  },
+  "devDependencies": {}
+}
