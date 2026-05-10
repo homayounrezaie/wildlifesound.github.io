@@ -541,27 +541,6 @@
         ).then(() => renderLivePanelBody());
       };
 
-      const birdnetTask = callBirdNet(b64, mimeType)
-        .then(result => {
-          const results = result?.results || [];
-          const species = birdnetToSpecies(results);
-          for (const modelResult of results) {
-            if (modelResult.unavailable) {
-              liveModelErrors.set(modelResult.model, 'Unavailable on Hugging Face');
-            } else if (modelResult.error && !(modelResult.detections || []).length) {
-              liveModelErrors.set(modelResult.model, modelResult.error);
-            } else {
-              liveModelErrors.delete(modelResult.model);
-            }
-          }
-          if (species.length) liveModelErrors.delete('BirdNET');
-          mergeSpecies(species);
-        })
-        .catch(err => {
-          liveModelErrors.set('BirdNET', err.message || 'Unable to analyse audio.');
-          renderLivePanelBody();
-        });
-
       const geminiTask = callGemini(b64, mimeType)
         .then(result => {
           liveModelErrors.delete('Gemini AI');
@@ -577,7 +556,7 @@
           renderLivePanelBody();
         });
 
-      await Promise.allSettled([geminiTask, birdnetTask]);
+      await Promise.allSettled([geminiTask]);
     } catch {
       // Live chunk failures should not stop recording.
     }
@@ -587,9 +566,7 @@
      LIVE PANEL
   ================================================================ */
   const LIVE_MODEL_GROUPS = [
-    { keys: ['BirdNET/AST', 'DBD-research-group/AST-BirdSet-XCL'], label: 'BirdNET · AST',       type: 'birdnet' },
-    { keys: ['BirdNET/W2V', 'dima806/bird_sounds_classification'],  label: 'BirdNET · Wav2Vec',  type: 'birdnet' },
-    { keys: ['Gemini'],                                              label: 'Gemini AI',           type: 'gemini'  },
+    { keys: ['Gemini'], label: 'Gemini AI', type: 'gemini' },
   ];
 
   function startLivePanel() {
@@ -1323,15 +1300,9 @@ If no biological species detected, return empty species array.`;
       return;
     }
 
-    // Run the three detection outputs in parallel:
-    // BirdNET AST, BirdNET Wav2Vec, and Gemini.
-    const [birdnetRaw, geminiResult] = await Promise.allSettled([
-      callBirdNet(b64, mimeType),
+    const [geminiResult] = await Promise.allSettled([
       callGemini(b64, mimeType),
     ]);
-
-    const birdnetResults = (birdnetRaw.status === 'fulfilled' ? birdnetRaw.value.results : []) || [];
-    const birdnetSpecies = birdnetToSpecies(birdnetResults);
 
     if (geminiResult.status === 'rejected') {
       const err = geminiResult.reason;
@@ -1353,14 +1324,7 @@ If no biological species detected, return empty species array.`;
       _source: 'gemini',
     }));
 
-    // Inform user if BirdNet models returned nothing (likely cold-starting)
-    if (!birdnetSpecies.length && birdnetResults.length > 0) {
-      toast('BirdNET models warming up — try again in 30 s for acoustic results.', 'success', 6000);
-    } else if (birdnetSpecies.length) {
-      toast(`BirdNET detected ${birdnetSpecies.length} species across ${birdnetResults.filter(r => r.detections?.length).length} models.`, 'success', 4000);
-    }
-
-    const species = [...birdnetSpecies, ...geminiSpecies];
+    const species = [...geminiSpecies];
 
     if (!species.length) {
       appendErrorCard('species-grid', 'No Species Detected',
@@ -1411,20 +1375,6 @@ If no biological species detected, return empty species array.`;
      SPECIES GRID — grouped by detection model
   ================================================================ */
   const MODEL_GROUPS = [
-    {
-      keys:  ['BirdNET/AST', 'DBD-research-group/AST-BirdSet-XCL'],
-      label: 'BirdNET · AST',
-      desc:  'Audio Spectrogram Transformer — 4,941 species',
-      type:  'birdnet',
-      icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 6c0 0-4.5 1.5-7 2L12 4l-2 2-4-1s2 4 4 5H4l2 3h14c2-1 3-3 2-7z"/></svg>`,
-    },
-    {
-      keys:  ['BirdNET/W2V', 'dima806/bird_sounds_classification'],
-      label: 'BirdNET · Wav2Vec',
-      desc:  'Wav2Vec2 acoustic model',
-      type:  'birdnet',
-      icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>`,
-    },
     {
       keys:  ['Gemini'],
       label: 'Gemini AI',
