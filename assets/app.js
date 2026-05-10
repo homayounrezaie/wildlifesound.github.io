@@ -679,6 +679,10 @@ Respond ONLY in this exact JSON format, no other text:
 If no biological species detected, return empty species array.`;
 
   async function callGemini(base64Audio, mimeType) {
+    const key = _geminiKey;
+    if (!key) throw new Error('No Gemini API key provided.');
+
+    const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'];
     const body = {
       contents: [{
         parts: [
@@ -689,38 +693,51 @@ If no biological species detected, return empty species array.`;
       generationConfig: { temperature: 0.1 }
     };
 
-    const res = await fetch('/api/analyse', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
+    let lastErr;
+    for (const model of GEMINI_MODELS) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+      let res;
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+      } catch (e) { lastErr = e; continue; }
 
-    if (!res.ok) {
-      let msg = `HTTP ${res.status}`;
-      try { const d = await res.json(); msg += ': ' + (d.error?.message || res.statusText); } catch {}
-      throw new Error(msg);
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try { const d = await res.json(); msg += ': ' + (d.error?.message || res.statusText); } catch {}
+        lastErr = new Error(msg);
+        if (res.status === 429 || res.status === 503) continue;
+        throw lastErr;
+      }
+
+      const data = await res.json();
+
+      if (data.error) {
+        const msg = data.error.message || 'Gemini error';
+        const err = new Error(msg);
+        if (msg.toLowerCase().includes('overload') || msg.toLowerCase().includes('503')) err.isOverload = true;
+        lastErr = err;
+        if (err.isOverload) continue;
+        throw err;
+      }
+
+      let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!rawText) { lastErr = new Error('Gemini returned an empty response.'); continue; }
+      rawText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+
+      try {
+        return JSON.parse(rawText);
+      } catch {
+        const err = new Error('JSON parse failed');
+        err.raw = rawText;
+        throw err;
+      }
     }
 
-    const data = await res.json();
-
-    if (data.error) {
-      const msg = data.error.message || 'Gemini error';
-      const err = new Error(msg);
-      if (msg.toLowerCase().includes('overload') || msg.toLowerCase().includes('503')) err.isOverload = true;
-      throw err;
-    }
-
-    let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!rawText) throw new Error('Gemini returned an empty response.');
-    rawText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-
-    try {
-      return JSON.parse(rawText);
-    } catch {
-      const err = new Error('JSON parse failed');
-      err.raw = rawText;
-      throw err;
-    }
+    throw lastErr || new Error('All Gemini models failed.');
   }
 
   /* ================================================================
@@ -730,22 +747,55 @@ If no biological species detected, return empty species array.`;
      Gemini will resolve labels to proper common/scientific names.
   ================================================================ */
   async function callBirdNet(base64Audio, mimeType) {
-    const post = () => fetch('/api/birdnet', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ audio: base64Audio, mimeType }),
-    });
+    const token = _hfToken;
+    if (!token) return { results: [] };
 
-    let res = await post();
-    if (res.status === 503) {
-      const d = await res.json().catch(() => ({}));
-      const wait = Math.min((d.retry_after || 12) * 1000, 15_000);
-      await new Promise(r => setTimeout(r, wait));
-      res = await post();
+    const HF_BASE = 'https://api-inference.huggingface.co/models';
+    const MODELS = [
+      { id: 'DBD-research-group/AST-BirdSet-XCL', source: 'BirdNET/AST' },
+      { id: 'dima806/bird_sounds_classification',  source: 'BirdNET/W2V' },
+    ];
+
+    // Decode base64 to binary once
+    const binary = atob(base64Audio);
+    const audioBuffer = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) audioBuffer[i] = binary.charCodeAt(i);
+
+    async function queryModel(model) {
+      async function attempt() {
+        const res = await fetch(`${HF_BASE}/${model.id}`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': mimeType || 'audio/webm',
+          },
+          body: audioBuffer,
+          signal: AbortSignal.timeout(35_000),
+        });
+
+        if (res.status === 503) {
+          const d = await res.json().catch(() => ({}));
+          const wait = Math.min((d.estimated_time || 20) * 1000, 30_000);
+          await new Promise(r => setTimeout(r, wait));
+          return attempt(); // one retry
+        }
+
+        if (!res.ok) return { model: model.source, error: `HTTP ${res.status}`, detections: [] };
+
+        const raw = await res.json().catch(() => []);
+        const detections = (Array.isArray(raw) ? raw : [])
+          .filter(d => d.score > 0.01)
+          .slice(0, 8)
+          .map(d => ({ label: d.label, score: Math.round(d.score * 100), source: model.source }));
+        return { model: model.source, detections };
+      }
+
+      try { return await attempt(); }
+      catch (e) { return { model: model.source, error: e.message, detections: [] }; }
     }
 
-    if (!res.ok) throw new Error(`BirdNET HTTP ${res.status}`);
-    return res.json().catch(() => ({ results: [] }));
+    const results = await Promise.all(MODELS.map(m => queryModel(m)));
+    return { results };
   }
 
   /* Format a raw BirdNet label into a readable display name.
