@@ -2416,6 +2416,10 @@ body {
   border-left: 3px solid #f5a623;
 }
 
+.model-section--xeno {
+  border-left: 3px solid #7c6cff;
+}
+
 .model-section-header {
   display: flex;
   align-items: center;
@@ -2522,6 +2526,11 @@ body {
   color: #f5a623;
 }
 
+.model-section--xeno .model-section-icon {
+  background: rgba(124,108,255,.12);
+  color: #8f83ff;
+}
+
 .model-section-icon svg {
   width: 16px;
   height: 16px;
@@ -2542,6 +2551,10 @@ body {
 
 .model-section--gemini .model-section-label {
   color: #f5a623;
+}
+
+.model-section--xeno .model-section-label {
+  color: #8f83ff;
 }
 
 .model-section-desc {
@@ -2571,6 +2584,30 @@ body {
 .model-section--gemini .model-section-count {
   background: rgba(245,166,35,.1);
   color: #f5a623;
+}
+
+.model-section--xeno .model-section-count {
+  background: rgba(124,108,255,.1);
+  color: #8f83ff;
+}
+
+.xeno-reference-card {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.xeno-card-meta {
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .model-section-list .species-card:first-child {
@@ -2628,18 +2665,36 @@ body {
   border-left-color: #d4820a;
 }
 
+:root.light .model-section--xeno {
+  border-left-color: #5b4be8;
+}
+
 :root.light .model-section--gemini .model-section-icon {
   background: rgba(212,130,10,.1);
   color: #d4820a;
+}
+
+:root.light .model-section--xeno .model-section-icon {
+  background: rgba(91,75,232,.1);
+  color: #5b4be8;
 }
 
 :root.light .model-section--gemini .model-section-label {
   color: #d4820a;
 }
 
+:root.light .model-section--xeno .model-section-label {
+  color: #5b4be8;
+}
+
 :root.light .model-section--gemini .model-section-count {
   background: rgba(212,130,10,.1);
   color: #d4820a;
+}
+
+:root.light .model-section--xeno .model-section-count {
+  background: rgba(91,75,232,.1);
+  color: #5b4be8;
 }
 
 /* Final cascade guard: keep the page compact after results. */

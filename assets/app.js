@@ -1419,6 +1419,7 @@ If no biological species detected, return empty species array.`;
       detectedSpecies.map(async sp => {
         await enrichSpeciesReference(sp);
         updateCard(sp);
+        renderXenoResultsSection();
         renderLiveDetections('results', detectedSpecies);
       })
     );
@@ -1446,6 +1447,12 @@ If no biological species detected, return empty species array.`;
       icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 6c0 0-4.5 1.5-7 2L12 4l-2 2-4-1s2 4 4 5H4l2 3h14c2-1 3-3 2-7z"/></svg>`,
     },
   ];
+  const XENO_GROUP = {
+    label: 'Xeno-canto',
+    desc:  'Verified reference recordings',
+    type:  'xeno',
+    icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10v4"/><path d="M7 6v12"/><path d="M11 3v18"/><path d="M15 7v10"/><path d="M19 11v2"/></svg>`,
+  };
 
   function renderSpeciesGrid(species) {
     const grid = $('species-grid');
@@ -1499,6 +1506,64 @@ If no biological species detected, return empty species array.`;
       const list = section.querySelector('.model-section-list');
       for (const sp of unmatched) renderLoadingCard(sp, sp._idx, list);
     }
+
+    renderXenoResultsSection(grid, species);
+  }
+
+  function renderXenoResultsSection(grid = $('species-grid'), species = detectedSpecies) {
+    if (!grid) return;
+    grid.querySelector('[data-model-group="xeno"]')?.remove();
+
+    const items = species.filter(sp => (sp.xenoRecordings || []).length);
+    const section = document.createElement('div');
+    section.className = 'model-section model-section--xeno';
+    section.dataset.modelGroup = 'xeno';
+    section.innerHTML = `
+      <div class="model-section-header">
+        <div class="model-section-meta">
+          <span class="model-section-icon">${XENO_GROUP.icon}</span>
+          <div>
+            <div class="model-section-label">${XENO_GROUP.label}</div>
+            <div class="model-section-desc">${XENO_GROUP.desc}</div>
+          </div>
+        </div>
+        <span class="model-section-count">${items.length} species</span>
+      </div>
+      <div class="model-section-list"></div>`;
+    grid.appendChild(section);
+
+    const list = section.querySelector('.model-section-list');
+    if (!items.length) {
+      list.innerHTML = '<div class="model-empty">Reference sounds appear here after species are matched</div>';
+      return;
+    }
+
+    for (const sp of items) renderXenoReferenceCard(sp, list);
+  }
+
+  function renderXenoReferenceCard(sp, list) {
+    const rec = sp.xenoRecordings?.[0];
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'species-card xeno-reference-card';
+    card.innerHTML = `
+      ${sp.image?.src
+        ? `<img class="species-row-photo" src="${esc(sp.image.src)}" alt="${esc(sp.common_name)}">`
+        : `<div class="species-row-photo-placeholder">${BIRD_ICON}</div>`}
+      <div class="species-row-body">
+        <div class="species-row-name">${esc(sp.common_name)}</div>
+        <div class="species-row-sci">${esc(sp.scientific_name || rec?.scientificName || '')}</div>
+        <div class="species-badges">
+          <span class="source-badge source-badge--xeno">${esc((sp.xenoRecordings || []).length)} XC sounds</span>
+          ${rec?.quality ? `<span class="type-badge">Quality ${esc(rec.quality)}</span>` : ''}
+        </div>
+        <div class="xeno-card-meta">${esc([rec?.type || 'reference sound', rec?.country].filter(Boolean).join(' - '))}</div>
+      </div>
+      <div class="species-row-right">
+        <svg class="species-row-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </div>`;
+    card.addEventListener('click', () => openDetailPanel(sp));
+    list.appendChild(card);
   }
 
   function showAnalyseAgainBtn() {

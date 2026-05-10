@@ -11,9 +11,9 @@ Wildlife is often easier to hear than see. This app turns short field recordings
 1. Record audio for up to 60 seconds, or upload an audio file.
 2. While recording, the app analyzes each 10-second chunk.
 3. Gemini 2.5 Flash Lite and BirdNET analyze the sound.
-4. Results are grouped by model, and duplicate species inside each model keep the best score.
-5. Species images are loaded from the Wikipedia REST API.
-6. Reference recordings are loaded from Xeno-canto for comparison.
+4. Xeno-canto adds verified reference recordings for matched species.
+5. Results are grouped by Gemini, BirdNET, and Xeno-canto references.
+6. Species images are loaded from the Wikipedia REST API.
 
 ## Setup
 
