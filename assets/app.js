@@ -345,6 +345,7 @@
     $('waveform-section').classList.add('visible');
     startTicker();
     startLivePanel();
+    setTimeout(() => document.querySelector('.detection-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
     requestAnimationFrame(() => { resizeCanvas(); drawSpectrogram(); });
 
     let elapsed = 0;
