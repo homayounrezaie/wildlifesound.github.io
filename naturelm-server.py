@@ -17,6 +17,25 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
+def load_env_file(file_path: Path) -> None:
+    if not file_path.exists():
+        return
+
+    for raw_line in file_path.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$", raw_line)
+        if not match:
+            continue
+        key, value = match.groups()
+        if key in os.environ:
+            continue
+        os.environ[key] = value.strip().strip("\"'")
+
+
+load_env_file(Path(__file__).resolve().parent / ".env.local")
+if os.environ.get("HF_TOKEN") and not os.environ.get("HUGGING_FACE_HUB_TOKEN"):
+    os.environ["HUGGING_FACE_HUB_TOKEN"] = os.environ["HF_TOKEN"]
+
+
 HOST = os.environ.get("NATURELM_HOST", "127.0.0.1")
 PORT = int(os.environ.get("NATURELM_PORT", "8787"))
 MODEL_ID = os.environ.get("NATURELM_MODEL_ID", "EarthSpeciesProject/NatureLM-audio")
