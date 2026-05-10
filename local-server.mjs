@@ -28,6 +28,11 @@ function contentType(filePath) {
   if (ext === '.js' || ext === '.mjs') return 'text/javascript; charset=utf-8';
   if (ext === '.json') return 'application/json; charset=utf-8';
   if (ext === '.svg') return 'image/svg+xml';
+  if (ext === '.wav') return 'audio/wav';
+  if (ext === '.mp3') return 'audio/mpeg';
+  if (ext === '.m4a') return 'audio/mp4';
+  if (ext === '.ogg') return 'audio/ogg';
+  if (ext === '.flac') return 'audio/flac';
   return 'application/octet-stream';
 }
 
@@ -100,7 +105,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const requestedPath = url.pathname === '/' ? '/index.html' : url.pathname;
+    const requestedPath = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname);
     const filePath = path.join(root, path.normalize(requestedPath).replace(/^\/+/, ''));
 
     if (!filePath.startsWith(root) || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {

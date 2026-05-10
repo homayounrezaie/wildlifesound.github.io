@@ -912,14 +912,92 @@ If no biological species detected, return empty species array.`;
     return bytes.buffer;
   }
 
+  function decodeWavPcm(arrayBuffer) {
+    const view = new DataView(arrayBuffer);
+    const text = (offset, length) => String.fromCharCode(...new Uint8Array(arrayBuffer, offset, length));
+    if (text(0, 4) !== 'RIFF' || text(8, 4) !== 'WAVE') throw new Error('Not a PCM WAV file.');
+
+    let offset = 12;
+    let fmt = null;
+    let dataOffset = 0;
+    let dataSize = 0;
+
+    while (offset + 8 <= view.byteLength) {
+      const id = text(offset, 4);
+      const size = view.getUint32(offset + 4, true);
+      const start = offset + 8;
+      if (id === 'fmt ') {
+        fmt = {
+          format: view.getUint16(start, true),
+          channels: view.getUint16(start + 2, true),
+          sampleRate: view.getUint32(start + 4, true),
+          bits: view.getUint16(start + 14, true),
+        };
+      } else if (id === 'data') {
+        dataOffset = start;
+        dataSize = size;
+      }
+      offset = start + size + (size % 2);
+    }
+
+    if (!fmt || !dataOffset || !dataSize) throw new Error('Invalid WAV data.');
+    if (![1, 3].includes(fmt.format)) throw new Error('Unsupported WAV encoding.');
+    const bytesPerSample = fmt.bits / 8;
+    const frameCount = Math.floor(dataSize / (bytesPerSample * fmt.channels));
+    const mono = new Float32Array(frameCount);
+
+    for (let i = 0; i < frameCount; i++) {
+      let sum = 0;
+      for (let c = 0; c < fmt.channels; c++) {
+        const pos = dataOffset + (i * fmt.channels + c) * bytesPerSample;
+        let sample = 0;
+        if (fmt.format === 3 && fmt.bits === 32) sample = view.getFloat32(pos, true);
+        else if (fmt.bits === 8) sample = (view.getUint8(pos) - 128) / 128;
+        else if (fmt.bits === 16) sample = view.getInt16(pos, true) / 32768;
+        else if (fmt.bits === 24) {
+          let value = view.getUint8(pos) | (view.getUint8(pos + 1) << 8) | (view.getUint8(pos + 2) << 16);
+          if (value & 0x800000) value |= 0xff000000;
+          sample = value / 8388608;
+        } else if (fmt.bits === 32) sample = view.getInt32(pos, true) / 2147483648;
+        sum += sample;
+      }
+      mono[i] = sum / fmt.channels;
+    }
+
+    return resamplePcm(mono, fmt.sampleRate, 48000);
+  }
+
+  function resamplePcm(pcm, fromRate, toRate) {
+    if (fromRate === toRate) return pcm;
+    const targetLength = Math.max(1, Math.round(pcm.length * toRate / fromRate));
+    const out = new Float32Array(targetLength);
+    const ratio = fromRate / toRate;
+    for (let i = 0; i < targetLength; i++) {
+      const src = i * ratio;
+      const j = Math.floor(src);
+      const frac = src - j;
+      const a = pcm[j] || 0;
+      const b = pcm[Math.min(j + 1, pcm.length - 1)] || a;
+      out[i] = a + (b - a) * frac;
+    }
+    return out;
+  }
+
   async function decodeAudioTo48k(base64Audio) {
+    const arrayBuffer = base64ToArrayBuffer(base64Audio);
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtx || !window.OfflineAudioContext) {
-      throw new Error('BirdNET needs Web Audio support.');
+      return decodeWavPcm(arrayBuffer);
     }
 
     const ctx = new AudioCtx();
-    const audioBuffer = await ctx.decodeAudioData(base64ToArrayBuffer(base64Audio).slice(0));
+    let audioBuffer;
+    try {
+      audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+    } catch (error) {
+      if (ctx.state !== 'closed') await ctx.close().catch(() => {});
+      return decodeWavPcm(arrayBuffer);
+    }
     if (ctx.state !== 'closed') await ctx.close().catch(() => {});
 
     const channels = audioBuffer.numberOfChannels;

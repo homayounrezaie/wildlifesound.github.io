@@ -38,6 +38,10 @@ Add sample clips to the `sounds/` folder, then use the app's upload button to te
 
 Supported formats: `.mp3`, `.wav`, `.m4a`, `.webm`, `.ogg`, `.flac`.
 
+Included sample:
+
+- `sounds/Eurasian Nuthatch - Sitta europaea hispaniensis - 30s.wav`
+
 ## Notes
 
 - `GEMINI_API_KEY` powers Gemini wildlife detection.
