@@ -75,6 +75,46 @@
       .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
   }
 
+  function cleanModelText(value) {
+    return String(value ?? '')
+      .replace(/```(?:json)?/gi, '')
+      .replace(/[<>]/g, ' ')
+      .replace(/^["'`\\\s:;,.\-[\]{}()]+|["'`\\\s:;,.\-[\]{}()]+$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function isValidSpeciesName(value) {
+    const text = cleanModelText(value);
+    if (text.length < 3) return false;
+    if (!/[A-Za-z]/.test(text)) return false;
+    if (/^[^A-Za-z]+$/.test(text)) return false;
+    return true;
+  }
+
+  function normalizeDetectedSpecies(sp, fallbackModel = 'Gemini AI') {
+    const commonName = cleanModelText(sp.common_name || sp.commonName || sp.name);
+    if (!isValidSpeciesName(commonName)) return null;
+
+    const scientificName = cleanModelText(sp.scientific_name || sp.scientificName || '');
+    const detectedBy = cleanModelText(sp._detected_by || sp._modelLabel || fallbackModel) || fallbackModel;
+    const rawScore = Number(sp.probability_score ?? sp.probability ?? sp.score);
+    const confidence = cleanModelText(sp.confidence || '');
+    const probabilityScore = Number.isFinite(rawScore)
+      ? Math.max(1, Math.min(99, Math.round(rawScore)))
+      : confidence.toLowerCase() === 'high' ? 88 : confidence.toLowerCase() === 'medium' ? 55 : 25;
+
+    return {
+      ...sp,
+      common_name: commonName,
+      scientific_name: scientificName,
+      confidence: confidence || (probabilityScore >= 70 ? 'high' : probabilityScore >= 40 ? 'medium' : 'low'),
+      probability_score: probabilityScore,
+      sound_description: cleanModelText(sp.sound_description || ''),
+      _detected_by: detectedBy,
+    };
+  }
+
   /* ================================================================
      WORKFLOW STEP INDICATOR
   ================================================================ */
@@ -517,7 +557,9 @@
       try { b64 = await blobToBase64(blob); } catch { return; }
 
       const mergeSpecies = newSpecies => {
-        for (const sp of newSpecies) {
+        for (const rawSp of newSpecies) {
+          const sp = normalizeDetectedSpecies(rawSp, rawSp?._detected_by);
+          if (!sp) continue;
           const key = `${sp._detected_by}::${(sp.common_name || '').toLowerCase().trim()}`;
           const existing = liveResultsMap.get(key);
           if (existing) {
@@ -569,11 +611,13 @@
       const geminiTask = callGemini(b64, mimeType)
         .then(result => {
           liveModelErrors.delete('Gemini AI');
-          const geminiSpecies = (result?.species || []).map(sp => ({
-            ...sp,
-            _detected_by: sp._modelLabel || 'Gemini AI',
-            _source: 'gemini',
-          }));
+          const geminiSpecies = (result?.species || [])
+            .map(sp => normalizeDetectedSpecies({
+              ...sp,
+              _detected_by: sp._modelLabel || 'Gemini AI',
+              _source: 'gemini',
+            }, 'Gemini AI'))
+            .filter(Boolean);
           mergeSpecies(geminiSpecies);
         })
         .catch(err => {
@@ -1093,7 +1137,7 @@ If no biological species detected, return empty species array.`;
     for (const result of birdnetResults) {
       for (const det of (result.detections || [])) {
         const label = parseBirdNetLabel(det);
-        out.push({
+        const species = normalizeDetectedSpecies({
           common_name:      label.common,
           scientific_name:  label.scientific,
           confidence:       det.score >= 70 ? 'high' : det.score >= 40 ? 'medium' : 'low',
@@ -1102,7 +1146,8 @@ If no biological species detected, return empty species array.`;
           _raw_label:       det.label,
           _detected_by:     result.model,
           _source:          'birdnet',
-        });
+        }, result.model);
+        if (species) out.push(species);
       }
     }
     return out;
@@ -1514,11 +1559,13 @@ If no biological species detected, return empty species array.`;
 
     const gemini             = geminiResult.value;
     const soundscape_summary = gemini.soundscape_summary || '';
-    const geminiSpecies      = (gemini.species || []).map(sp => ({
-      ...sp,
-      _detected_by: sp._modelLabel || 'Gemini AI',
-      _source: 'gemini',
-    }));
+    const geminiSpecies      = (gemini.species || [])
+      .map(sp => normalizeDetectedSpecies({
+        ...sp,
+        _detected_by: sp._modelLabel || 'Gemini AI',
+        _source: 'gemini',
+      }, 'Gemini AI'))
+      .filter(Boolean);
 
     const species = [...geminiSpecies, ...birdnetSpecies];
 
