@@ -364,6 +364,11 @@
         renderLiveDetections('results', detectedSpecies);
         renderSpeciesGrid(detectedSpecies);
         setTimeout(() => $('species-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 200);
+        await Promise.allSettled(detectedSpecies.map(async sp => {
+          await enrichSpeciesReference(sp);
+          updateCard(sp);
+          renderLiveDetections('results', detectedSpecies);
+        }));
         showAnalyseAgainBtn();
       }
 
@@ -706,11 +711,12 @@ If no biological species detected, return empty species array.`;
     if (!key) throw new Error('No Gemini API key provided.');
 
     const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'];
+    const safeMime = (mimeType || 'audio/webm').split(';')[0];
     const body = {
       contents: [{
         parts: [
           { text: GEMINI_PROMPT_BASE },
-          { inline_data: { mime_type: mimeType || 'audio/webm', data: base64Audio } }
+          { inline_data: { mime_type: safeMime, data: base64Audio } }
         ]
       }],
       generationConfig: { temperature: 0.1 }
@@ -792,28 +798,37 @@ If no biological species detected, return empty species array.`;
       { id: 'dima806/bird_sounds_classification',  source: 'BirdNET/W2V' },
     ];
 
-    // Decode base64 to binary once
+    // Decode base64 → Blob (simpler CORS preflight than raw binary)
     const binary = atob(base64Audio);
-    const audioBuffer = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) audioBuffer[i] = binary.charCodeAt(i);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    // Strip codec params from MIME — HF only needs the base type
+    const baseMime = (mimeType || 'audio/webm').split(';')[0];
+    const audioBlob = new Blob([bytes], { type: baseMime });
 
     async function queryModel(model) {
       async function attempt() {
-        const res = await fetch(`${HF_BASE}/${model.id}`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': mimeType || 'audio/webm',
-          },
-          body: audioBuffer,
-          signal: AbortSignal.timeout(35_000),
-        });
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 35_000);
+        let res;
+        try {
+          res = await fetch(`${HF_BASE}/${model.id}`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': baseMime,
+            },
+            body: audioBlob,
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timer);
+        }
 
         if (res.status === 503) {
           const d = await res.json().catch(() => ({}));
-          const wait = Math.min((d.estimated_time || 20) * 1000, 30_000);
-          await new Promise(r => setTimeout(r, wait));
-          return attempt(); // one retry
+          await new Promise(r => setTimeout(r, Math.min((d.estimated_time || 20) * 1000, 30_000)));
+          return attempt();
         }
 
         if (!res.ok) return { model: model.source, error: `HTTP ${res.status}`, detections: [] };
@@ -1535,6 +1550,7 @@ If no biological species detected, return empty species array.`;
         </div>
 
         ${sp.sound_description ? `<div class="detail-desc">${esc(sp.sound_description)}</div>` : ''}
+        ${renderXenoDetail(sp)}
         ${wikiLink}
       </div>`;
 
