@@ -25,7 +25,7 @@ async function queryModel(model, audioBuffer, mimeType, token) {
         'Accept': 'application/json',
       },
       body: audioBuffer,
-      signal: AbortSignal.timeout(35_000),
+      signal: AbortSignal.timeout(12_000),
     });
   } catch (err) {
     return { model: model.source, error: err.message, detections: [] };

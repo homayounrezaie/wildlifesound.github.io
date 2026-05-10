@@ -34,7 +34,7 @@
   let chunkLastAt       = 0;           // performance.now() when last chunk was sent
   let chunkElapsedAt    = 0;           // recording seconds when last chunk was sent
   let chunkMime         = '';          // mime type of recording
-  let chunkProcessing   = false;       // prevent overlapping chunk calls
+  const activeChunkAnalyses = new Set();
 
   /* ================================================================
      DOM REFS (resolved once after DOMContentLoaded)
@@ -211,6 +211,11 @@
   async function startRecording() {
     if (isRecording || isProcessing) return;
 
+    $('species-grid').innerHTML = '';
+    $('analyse-again-btn')?.remove();
+    document.querySelectorAll('.error-card').forEach(c => c.remove());
+    detectedSpecies = [];
+
     if (!navigator.mediaDevices?.getUserMedia) {
       appendErrorCard('species-grid', 'Browser Not Supported',
         'Audio recording is not available in this browser.\nPlease use a current version of Chrome, Firefox, or Edge.');
@@ -252,7 +257,7 @@
     chunkLastAt       = performance.now();
     chunkElapsedAt    = 0;
     chunkMime         = mime;
-    chunkProcessing   = false;
+    activeChunkAnalyses.clear();
 
     audioChunks = [];
     mediaRecorder = mime
@@ -286,6 +291,11 @@
         await analyseChunk(leftoverBlob, fullMime, chunkElapsedAt, chunkElapsedAt + Math.round(leftoverMs / 1000));
       }
       chunkWindowChunks = [];
+
+      if (activeChunkAnalyses.size) {
+        setPanelStatus('Finishing analysis', 'analyzing');
+        await Promise.allSettled([...activeChunkAnalyses]);
+      }
 
       // Finalize panel
       stopLivePanel();
@@ -363,58 +373,70 @@
   /* ================================================================
      LIVE CHUNK ANALYSIS
   ================================================================ */
-  async function analyseChunk(blob, mimeType, timeStart = 0, timeEnd = 10) {
-    if (chunkProcessing) return;
-    chunkProcessing = true;
+  function analyseChunk(blob, mimeType, timeStart = 0, timeEnd = 10) {
+    const task = runChunkAnalysis(blob, mimeType, timeStart, timeEnd);
+    activeChunkAnalyses.add(task);
+    renderLivePanelBody();
+    task.finally(() => {
+      activeChunkAnalyses.delete(task);
+      renderLivePanelBody();
+    });
+    return task;
+  }
+
+  async function runChunkAnalysis(blob, mimeType, timeStart = 0, timeEnd = 10) {
     try {
       let b64;
       try { b64 = await blobToBase64(blob); } catch { return; }
 
-      const [birdnetRaw, geminiResult] = await Promise.allSettled([
-        callBirdNet(b64, mimeType),
-        callGemini(b64, mimeType),
-      ]);
-
-      const birdnetResults = (birdnetRaw.status === 'fulfilled' ? birdnetRaw.value?.results : []) || [];
-      const birdnetSpecies = birdnetToSpecies(birdnetResults);
-      const geminiSpecies  = geminiResult.status === 'fulfilled'
-        ? (geminiResult.value?.species || []).map(sp => ({ ...sp, _detected_by: 'Gemini', _source: 'gemini' }))
-        : [];
-
-      const newSpecies = [...birdnetSpecies, ...geminiSpecies];
-
-      for (const sp of newSpecies) {
-        const key = `${sp._detected_by}::${(sp.common_name || '').toLowerCase().trim()}`;
-        const existing = liveResultsMap.get(key);
-        if (existing) {
-          if ((sp.probability_score || 0) > (existing.probability_score || 0)) {
-            existing.probability_score = sp.probability_score;
-            existing.confidence        = sp.confidence;
+      const mergeSpecies = newSpecies => {
+        for (const sp of newSpecies) {
+          const key = `${sp._detected_by}::${(sp.common_name || '').toLowerCase().trim()}`;
+          const existing = liveResultsMap.get(key);
+          if (existing) {
+            if ((sp.probability_score || 0) > (existing.probability_score || 0)) {
+              existing.probability_score = sp.probability_score;
+              existing.confidence        = sp.confidence;
+            }
+            existing.timeEnd = timeEnd;
+          } else {
+            liveResultsMap.set(key, { ...sp, timeStart, timeEnd, _imageLoaded: false });
           }
-          existing.timeEnd = timeEnd;
-        } else {
-          liveResultsMap.set(key, { ...sp, timeStart, timeEnd, _imageLoaded: false });
         }
-      }
 
-      // Re-index
-      let idx = 0;
-      for (const sp of liveResultsMap.values()) sp._idx = idx++;
+        let idx = 0;
+        for (const sp of liveResultsMap.values()) sp._idx = idx++;
+        renderLivePanelBody();
 
-      // Fetch Wikipedia images for new species (non-blocking)
-      Promise.allSettled(
-        [...liveResultsMap.values()]
-          .filter(sp => !sp._imageLoaded)
-          .map(async sp => {
-            sp._imageLoaded = true;
-            const img = await fetchSpeciesImage(sp.scientific_name, sp._raw_label || sp.common_name).catch(() => null);
-            if (img) sp.image = img;
-          })
-      ).then(() => renderLivePanelBody());
+        Promise.allSettled(
+          [...liveResultsMap.values()]
+            .filter(sp => !sp._imageLoaded)
+            .map(async sp => {
+              sp._imageLoaded = true;
+              const img = await fetchSpeciesImage(sp.scientific_name, sp._raw_label || sp.common_name).catch(() => null);
+              if (img) sp.image = img;
+            })
+        ).then(() => renderLivePanelBody());
+      };
 
-      renderLivePanelBody();
-    } finally {
-      chunkProcessing = false;
+      const birdnetTask = callBirdNet(b64, mimeType)
+        .then(result => mergeSpecies(birdnetToSpecies(result?.results || [])))
+        .catch(() => {});
+
+      const geminiTask = callGemini(b64, mimeType)
+        .then(result => {
+          const geminiSpecies = (result?.species || []).map(sp => ({
+            ...sp,
+            _detected_by: 'Gemini',
+            _source: 'gemini',
+          }));
+          mergeSpecies(geminiSpecies);
+        })
+        .catch(() => {});
+
+      await Promise.allSettled([geminiTask, birdnetTask]);
+    } catch {
+      // Live chunk failures should not stop recording.
     }
   }
 
@@ -463,8 +485,9 @@
         <div class="lp-group-label">${group.label}</div>`;
 
       if (!items.length) {
+        const waitingText = activeChunkAnalyses.size ? 'Analyzing current chunk...' : 'Listening for matches...';
         html += `<div class="lp-waiting">
-          <span class="lp-waiting-dot"></span> Listening for matches…
+          <span class="lp-waiting-dot"></span> ${waitingText}
         </div>`;
       } else {
         for (const sp of items) {
