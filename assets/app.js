@@ -83,6 +83,11 @@
 
   function cleanModelText(value) {
     return String(value ?? '')
+      .replace(/&quot;/gi, '"')
+      .replace(/&apos;|&#0?39;|&#x27;/gi, "'")
+      .replace(/&gt;/gi, '>')
+      .replace(/&lt;/gi, '<')
+      .replace(/&amp;/gi, '&')
       .replace(/```(?:json)?/gi, '')
       .replace(/[<>]/g, ' ')
       .replace(/^["'`\\\s:;,.\-[\]{}()]+|["'`\\\s:;,.\-[\]{}()]+$/g, '')
@@ -707,9 +712,11 @@
         </div>`;
       } else {
         for (const sp of items) {
+          const commonName = cleanModelText(sp.common_name);
+          const scientificName = cleanModelText(sp.scientific_name);
           const pct   = Math.max(1, Math.min(99, Math.round(sp.probability_score || 0)));
           const imgHTML = sp.image
-            ? `<img class="lp-thumb" src="${esc(sp.image.src)}" alt="${esc(sp.common_name)}">`
+            ? `<img class="lp-thumb" src="${esc(sp.image.src)}" alt="${esc(commonName)}">`
             : `<div class="lp-thumb lp-thumb--placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 6c0 0-4.5 1.5-7 2L12 4l-2 2-4-1s2 4 4 5H4l2 3h14c2-1 3-3 2-7z"/></svg></div>`;
           const timeStr = sp.timeEnd != null
             ? `${fmtTime(sp.timeStart)}–${fmtTime(sp.timeEnd)}`
@@ -717,8 +724,8 @@
           html += `<div class="lp-row">
             ${imgHTML}
             <div class="lp-row-body">
-              <div class="lp-name">${esc(sp.common_name)}</div>
-              ${sp.scientific_name ? `<div class="lp-sci">${esc(sp.scientific_name)}</div>` : ''}
+              <div class="lp-name">${esc(commonName)}</div>
+              ${scientificName ? `<div class="lp-sci">${esc(scientificName)}</div>` : ''}
             </div>
             <div class="lp-row-right">
               <div class="lp-pct">${pct}%</div>
@@ -1391,12 +1398,14 @@ If no biological species detected, return empty species array.`;
 
     const { pct, cls, label } = probMeta(sp);
     const type = speciesType(sp);
+    const commonName = cleanModelText(sp.common_name);
+    const scientificName = cleanModelText(sp.scientific_name);
 
     card.innerHTML = `
       <div class="species-row-photo-placeholder">${BIRD_ICON}</div>
       <div class="species-row-body">
-        <div class="species-row-name">${esc(sp.common_name)}</div>
-        <div class="species-row-sci">${esc(sp.scientific_name)}</div>
+        <div class="species-row-name">${esc(commonName)}</div>
+        <div class="species-row-sci">${esc(scientificName)}</div>
         <div class="species-badges"><span class="type-badge">${esc(type)}</span></div>
         <div class="prob-bar-wrap">
           <div class="prob-bar-track"><div class="prob-bar-fill ${cls}" style="width:${pct}%"></div></div>
@@ -1419,9 +1428,11 @@ If no biological species detected, return empty species array.`;
     const img = sp.image;
     const { pct, cls, label } = probMeta(sp);
     const type = speciesType(sp);
+    const commonName = cleanModelText(sp.common_name);
+    const scientificName = cleanModelText(sp.scientific_name);
 
     const photoHTML = img
-      ? `<img class="species-row-photo" src="${esc(img.src)}" alt="${esc(sp.common_name)}"
+      ? `<img class="species-row-photo" src="${esc(img.src)}" alt="${esc(commonName)}"
               onload="this.classList.add('loaded')" onerror="this.outerHTML='<div class=\\'species-row-photo-placeholder\\'>${BIRD_ICON.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}</div>'">`
       : `<div class="species-row-photo-placeholder">${BIRD_ICON}</div>`;
 
@@ -1433,8 +1444,8 @@ If no biological species detected, return empty species array.`;
     card.innerHTML = `
       ${photoHTML}
       <div class="species-row-body">
-        <div class="species-row-name">${esc(sp.common_name)}</div>
-        <div class="species-row-sci">${esc(sp.scientific_name)}</div>
+        <div class="species-row-name">${esc(commonName)}</div>
+        <div class="species-row-sci">${esc(scientificName)}</div>
         <div class="species-badges">
           <span class="type-badge">${esc(type)}</span>
           ${sourceBadge}
@@ -1875,11 +1886,14 @@ If no biological species detected, return empty species array.`;
 
     const { label: confLabel } = probMeta(sp);
     const source  = sp._detected_by || (sp._source === 'birdnet' ? 'BirdNET' : 'Gemini AI');
+    const commonName = cleanModelText(sp.common_name);
+    const scientificName = cleanModelText(sp.scientific_name);
+    const soundDescription = cleanModelText(sp.sound_description);
 
     const birdSVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M22 6c0 0-4.5 1.5-7 2L12 4l-2 2-4-1s2 4 4 5H4l2 3h14c2-1 3-3 2-7z"/></svg>`;
 
     const heroHTML = sp.image
-      ? `<img class="detail-hero-img" src="${esc(sp.image.src)}" alt="${esc(sp.common_name)}"
+      ? `<img class="detail-hero-img" src="${esc(sp.image.src)}" alt="${esc(commonName)}"
               style="opacity:0;transition:opacity .5s" onload="this.style.opacity=1">`
       : `<div class="detail-hero-placeholder">${birdSVG}</div>`;
 
@@ -1894,8 +1908,8 @@ If no biological species detected, return empty species array.`;
       ${heroHTML}
       <div class="detail-handle"></div>
       <div class="detail-content">
-        <div class="detail-name" id="detail-name">${esc(sp.common_name)}</div>
-        <div class="detail-scientific">${esc(sp.scientific_name)}</div>
+        <div class="detail-name" id="detail-name">${esc(commonName)}</div>
+        <div class="detail-scientific">${esc(scientificName)}</div>
 
         <div class="detail-chips">
           <div class="detail-chip">
@@ -1908,7 +1922,7 @@ If no biological species detected, return empty species array.`;
           </div>
         </div>
 
-        ${sp.sound_description ? `<div class="detail-desc">${esc(sp.sound_description)}</div>` : ''}
+        ${soundDescription ? `<div class="detail-desc">${esc(soundDescription)}</div>` : ''}
         ${wikiLink}
       </div>`;
 
