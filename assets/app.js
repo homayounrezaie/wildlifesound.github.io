@@ -17,6 +17,7 @@
     { key: 'YAMNet AudioSet', desc: 'Simple browser audio event model' },
   ];
   const BIRDNET_MIN_CONFIDENCE = 0.03;
+  const MIN_VISIBLE_PROBABILITY = 60;
 
   /* ================================================================
      APPLICATION STATE
@@ -114,6 +115,7 @@
     const probabilityScore = Number.isFinite(rawScore)
       ? Math.max(1, Math.min(99, Math.round(rawScore)))
       : confidence.toLowerCase() === 'high' ? 88 : confidence.toLowerCase() === 'medium' ? 55 : 25;
+    if (probabilityScore < MIN_VISIBLE_PROBABILITY) return null;
 
     return {
       ...sp,
@@ -124,6 +126,10 @@
       sound_description: cleanModelText(sp.sound_description || ''),
       _detected_by: detectedBy,
     };
+  }
+
+  function isVisibleSpecies(sp) {
+    return Number(sp?.probability_score || 0) >= MIN_VISIBLE_PROBABILITY;
   }
 
   /* ================================================================
@@ -457,7 +463,9 @@
       // Finalize panel
       stopLivePanel();
 
-      if (liveResultsMap.size === 0) {
+      const visibleLiveResults = [...liveResultsMap.values()].filter(isVisibleSpecies);
+
+      if (visibleLiveResults.length === 0) {
         const failures = blockingModelFailures();
         const failureText = failures.map(([model, msg]) => `${model}: ${msg}`).join('\n');
         const onlyBirdnetNoMatch = liveModelErrors.size > 0 && failures.length === 0;
@@ -472,7 +480,7 @@
         renderLiveDetections('empty');
         setPanelStatus(failureText ? title : 'No detection', failureText ? 'error' : 'empty');
       } else {
-        detectedSpecies = [...liveResultsMap.values()];
+        detectedSpecies = visibleLiveResults;
         setPanelStatus('Results ready', 'results');
         renderLiveDetections('results', detectedSpecies);
         renderSpeciesGrid(detectedSpecies);
@@ -611,7 +619,7 @@
             }
           }
           if (species.length) liveModelErrors.delete('BirdNET');
-          else liveModelErrors.set('BirdNET', 'No confident bird match yet');
+          else liveModelErrors.set('BirdNET', `No match at ${MIN_VISIBLE_PROBABILITY}% or higher yet`);
           mergeSpecies(species);
         })
         .catch(err => {
@@ -640,7 +648,7 @@
         .then(result => {
           liveModelErrors.delete('YAMNet AudioSet');
           const yamNetSpecies = yamNetToSpecies(result);
-          if (!yamNetSpecies.length) liveModelErrors.set('YAMNet AudioSet', 'No animal sound class yet');
+          if (!yamNetSpecies.length) liveModelErrors.set('YAMNet AudioSet', `No animal sound class at ${MIN_VISIBLE_PROBABILITY}% or higher yet`);
           mergeSpecies(yamNetSpecies);
         })
         .catch(err => {
@@ -694,7 +702,7 @@
     let html = '';
 
     for (const group of LIVE_MODEL_GROUPS) {
-      const items = [...liveResultsMap.values()].filter(sp => group.keys.includes(sp._detected_by));
+      const items = [...liveResultsMap.values()].filter(sp => group.keys.includes(sp._detected_by) && isVisibleSpecies(sp));
       html += `<div class="lp-group lp-group--${group.type}">
         <div class="lp-group-label">${group.label}</div>`;
 
@@ -1510,17 +1518,20 @@ If no biological species detected, return empty species array.`;
       return;
     }
 
-    if (state === 'results' && species.length) {
-      body.innerHTML = species.slice(0, 3).map(sp => {
+    const visibleSpecies = species.filter(isVisibleSpecies);
+
+    if (state === 'results' && visibleSpecies.length) {
+      body.innerHTML = visibleSpecies.slice(0, 3).map(sp => {
         const { label } = probMeta(sp);
+        const commonName = cleanModelText(sp.common_name);
         const image = sp.image?.src
-          ? `<img src="${esc(sp.image.src)}" alt="${esc(sp.common_name)}" loading="lazy">`
+          ? `<img src="${esc(sp.image.src)}" alt="${esc(commonName)}" loading="lazy">`
           : `<span class="live-thumb-placeholder">${BIRD_ICON}</span>`;
         return `
           <button class="live-chip" type="button" data-idx="${sp._idx}">
             <span class="live-thumb">${image}</span>
             <span class="live-chip-text">
-              <span>${esc(sp.common_name)}</span>
+              <span>${esc(commonName)}</span>
               <strong>${label}</strong>
             </span>
           </button>`;
@@ -1829,7 +1840,7 @@ If no biological species detected, return empty species array.`;
     const allKeys = new Set(MODEL_GROUPS.flatMap(g => g.keys));
 
     for (const group of MODEL_GROUPS) {
-      const items = species.filter(sp => group.keys.includes(sp._detected_by));
+      const items = species.filter(sp => group.keys.includes(sp._detected_by) && isVisibleSpecies(sp));
 
       const section = document.createElement('div');
       section.className = `model-section model-section--${group.type}`;
@@ -1853,12 +1864,12 @@ If no biological species detected, return empty species array.`;
           renderLoadingCard(sp, sp._idx, list);
         }
       } else {
-        list.innerHTML = `<div class="model-empty">${esc(modelMessages.get(group.label) || 'No confident match from this model')}</div>`;
+        list.innerHTML = `<div class="model-empty">${esc(modelMessages.get(group.label) || `No match at ${MIN_VISIBLE_PROBABILITY}% or higher`)}</div>`;
       }
     }
 
     // Fallback for unrecognised detected_by
-    const unmatched = species.filter(sp => !allKeys.has(sp._detected_by));
+    const unmatched = species.filter(sp => !allKeys.has(sp._detected_by) && isVisibleSpecies(sp));
     if (unmatched.length) {
       const section = document.createElement('div');
       section.className = 'model-section model-section--gemini';
