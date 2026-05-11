@@ -460,9 +460,6 @@
         if (activeChunkAnalyses.size) await Promise.allSettled([...activeChunkAnalyses]);
       }
 
-      // Finalize panel
-      stopLivePanel();
-
       const visibleLiveResults = [...liveResultsMap.values()].filter(isVisibleSpecies);
 
       if (visibleLiveResults.length === 0) {
@@ -505,7 +502,6 @@
     $('hero').classList.add('hero--compact');
     $('waveform-section').classList.add('visible');
     startTicker();
-    startLivePanel();
     setTimeout(() => document.querySelector('.detection-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
     requestAnimationFrame(() => { resizeCanvas(); drawSpectrogram(); });
 
@@ -562,10 +558,8 @@
   function analyseChunk(blob, mimeType, timeStart = 0, timeEnd = 10) {
     const task = runChunkAnalysis(blob, mimeType, timeStart, timeEnd);
     activeChunkAnalyses.add(task);
-    renderLivePanelBody();
     task.finally(() => {
       activeChunkAnalyses.delete(task);
-      renderLivePanelBody();
     });
     return task;
   }
@@ -594,7 +588,6 @@
 
         let idx = 0;
         for (const sp of liveResultsMap.values()) sp._idx = idx++;
-        renderLivePanelBody();
 
         Promise.allSettled(
           [...liveResultsMap.values()]
@@ -604,7 +597,7 @@
               const img = await fetchSpeciesImage(sp.scientific_name, sp._raw_label || sp.common_name).catch(() => null);
               if (img) sp.image = img;
             })
-        ).then(() => renderLivePanelBody());
+        );
       };
 
       const birdnetTask = callBirdNet(b64, mimeType)
@@ -624,7 +617,6 @@
         })
         .catch(err => {
           liveModelErrors.set('BirdNET', err.message || 'Unable to analyse audio.');
-          renderLivePanelBody();
         });
 
       const geminiTask = callGemini(b64, mimeType)
@@ -641,7 +633,6 @@
         })
         .catch(err => {
           liveModelErrors.set('Gemini AI', err.message || 'Unable to analyse audio.');
-          renderLivePanelBody();
         });
 
       const yamNetTask = callYamNet(b64)
@@ -653,7 +644,6 @@
         })
         .catch(err => {
           liveModelErrors.set('YAMNet AudioSet', err.message || 'Unable to analyse audio.');
-          renderLivePanelBody();
         });
 
       await Promise.allSettled([geminiTask, birdnetTask, yamNetTask]);
@@ -662,90 +652,9 @@
     }
   }
 
-  /* ================================================================
-     LIVE PANEL
-  ================================================================ */
-  const LIVE_MODEL_GROUPS = [
-    ...GEMINI_MODEL_GROUPS.map(group => ({ keys: [group.key], label: group.key, type: 'gemini' })),
-    { keys: ['BirdNET'], label: 'BirdNET', type: 'birdnet' },
-    ...YAMNET_MODEL_GROUPS.map(group => ({ keys: [group.key], label: group.key, type: 'yamnet' })),
-  ];
-
-  function startLivePanel() {
-    const panel = $('live-panel');
-    if (!panel) return;
-    $('live-panel-title').textContent = 'Live detections';
-    $('live-panel-pulse').style.display = '';
-    panel.classList.remove('hidden');
-    renderLivePanelBody();
-  }
-
-  function stopLivePanel() {
-    const panel = $('live-panel');
-    if (!panel) return;
-    $('live-panel-title').textContent = 'Final detections';
-    $('live-panel-pulse').style.display = 'none';
-    panel.classList.remove('hidden');
-    renderLivePanelBody();
-  }
-
   function fmtTime(s) {
     const m = Math.floor(s / 60);
     return `${m}:${String(s % 60).padStart(2, '0')}`;
-  }
-
-  function renderLivePanelBody() {
-    const body = $('live-panel-body');
-    if (!body) return;
-
-    const allKeys = new Set(LIVE_MODEL_GROUPS.flatMap(g => g.keys));
-    let html = '';
-
-    for (const group of LIVE_MODEL_GROUPS) {
-      const items = [...liveResultsMap.values()].filter(sp => group.keys.includes(sp._detected_by) && isVisibleSpecies(sp));
-      html += `<div class="lp-group lp-group--${group.type}">
-        <div class="lp-group-label">${group.label}</div>`;
-
-      if (!items.length) {
-        const errorText = liveModelErrors.get(group.label) ||
-          group.keys.map(key => liveModelErrors.get(key)).find(Boolean) ||
-          (group.type === 'birdnet' ? liveModelErrors.get('BirdNET') : null);
-        const isFinal = $('live-panel-title')?.textContent?.toLowerCase().includes('final');
-        const waitingText = activeChunkAnalyses.size
-          ? 'Analyzing current chunk...'
-          : isFinal ? 'No result from this model' : 'Listening for matches...';
-        const mutedClass = errorText && /unavailable on hugging face/i.test(errorText) ? ' lp-waiting--muted' : '';
-        html += `<div class="lp-waiting">
-          <span class="lp-waiting-dot"></span> <span class="${mutedClass.trim()}">${esc(errorText || waitingText)}</span>
-        </div>`;
-      } else {
-        for (const sp of items) {
-          const commonName = cleanModelText(sp.common_name);
-          const scientificName = cleanModelText(sp.scientific_name);
-          const pct   = Math.max(1, Math.min(99, Math.round(sp.probability_score || 0)));
-          const imgHTML = sp.image
-            ? `<img class="lp-thumb" src="${esc(sp.image.src)}" alt="${esc(commonName)}">`
-            : `<div class="lp-thumb lp-thumb--placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 6c0 0-4.5 1.5-7 2L12 4l-2 2-4-1s2 4 4 5H4l2 3h14c2-1 3-3 2-7z"/></svg></div>`;
-          const timeStr = sp.timeEnd != null
-            ? `${fmtTime(sp.timeStart)}–${fmtTime(sp.timeEnd)}`
-            : fmtTime(sp.timeStart || 0);
-          html += `<div class="lp-row">
-            ${imgHTML}
-            <div class="lp-row-body">
-              <div class="lp-name">${esc(commonName)}</div>
-              ${scientificName ? `<div class="lp-sci">${esc(scientificName)}</div>` : ''}
-            </div>
-            <div class="lp-row-right">
-              <div class="lp-pct">${pct}%</div>
-              <div class="lp-time">${timeStr}</div>
-            </div>
-          </div>`;
-        }
-      }
-      html += `</div>`;
-    }
-
-    body.innerHTML = html;
   }
 
   /* ================================================================
