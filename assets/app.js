@@ -13,8 +13,8 @@
   const GEMINI_MODEL_GROUPS = [
     { key: 'Gemini 2.5 Flash Lite', desc: 'Fast Gemini wildlife detector' },
   ];
-  const NATURELM_MODEL_GROUPS = [
-    { key: 'NatureLM-audio', desc: 'Bioacoustic audio-language model' },
+  const YAMNET_MODEL_GROUPS = [
+    { key: 'YAMNet AudioSet', desc: 'Simple browser audio event model' },
   ];
   const BIRDNET_MIN_CONFIDENCE = 0.03;
 
@@ -37,9 +37,11 @@
   let lastSignalUpdate  = 0;
   let birdNetWorkerPromise = null;
   let birdNetPredictionId = 0;
+  let yamNetWorkerPromise = null;
+  let yamNetPredictionId = 0;
 
   // Gemini uses server-side API routes because API keys must not live in browser code.
-  // BirdNET runs locally in the browser with TensorFlow.js.
+  // BirdNET uses a local API fallback plus browser TensorFlow.js; YAMNet runs in browser TensorFlow.js.
   const HAS_LOCAL_API = window.location.protocol.startsWith('http') &&
     ['localhost', '127.0.0.1'].includes(window.location.hostname);
   const API_BASE = (window.WILDLIFE_API_BASE || '').replace(/\/$/, '');
@@ -629,24 +631,19 @@
           renderLivePanelBody();
         });
 
-      const natureLmTask = callNatureLM(b64, mimeType)
+      const yamNetTask = callYamNet(b64)
         .then(result => {
-          liveModelErrors.delete('NatureLM-audio');
-          if (result?.disabled) {
-            liveModelErrors.set('NatureLM-audio', result.message || 'Set NATURELM_API_URL to enable');
-            renderLivePanelBody();
-            return;
-          }
-          const natureLmSpecies = natureLmToSpecies(result);
-          if (!natureLmSpecies.length) liveModelErrors.set('NatureLM-audio', 'No confident match yet');
-          mergeSpecies(natureLmSpecies);
+          liveModelErrors.delete('YAMNet AudioSet');
+          const yamNetSpecies = yamNetToSpecies(result);
+          if (!yamNetSpecies.length) liveModelErrors.set('YAMNet AudioSet', 'No animal sound class yet');
+          mergeSpecies(yamNetSpecies);
         })
         .catch(err => {
-          liveModelErrors.set('NatureLM-audio', err.message || 'Unable to analyse audio.');
+          liveModelErrors.set('YAMNet AudioSet', err.message || 'Unable to analyse audio.');
           renderLivePanelBody();
         });
 
-      await Promise.allSettled([geminiTask, birdnetTask, natureLmTask]);
+      await Promise.allSettled([geminiTask, birdnetTask, yamNetTask]);
     } catch {
       // Live chunk failures should not stop recording.
     }
@@ -658,7 +655,7 @@
   const LIVE_MODEL_GROUPS = [
     ...GEMINI_MODEL_GROUPS.map(group => ({ keys: [group.key], label: group.key, type: 'gemini' })),
     { keys: ['BirdNET'], label: 'BirdNET', type: 'birdnet' },
-    ...NATURELM_MODEL_GROUPS.map(group => ({ keys: [group.key], label: group.key, type: 'naturelm' })),
+    ...YAMNET_MODEL_GROUPS.map(group => ({ keys: [group.key], label: group.key, type: 'yamnet' })),
   ];
 
   function startLivePanel() {
@@ -930,28 +927,6 @@ If no biological species detected, return empty species array.`;
     }
   }
 
-  async function callNatureLM(base64Audio, mimeType) {
-    const res = await fetch(apiUrl('/api/naturelm'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        audio_base64: base64Audio,
-        mime_type: (mimeType || 'audio/webm').split(';')[0],
-        query: 'What are the common names and scientific names for the animal species in the audio, if any? Return JSON with species.'
-      })
-    });
-
-    if (!res.ok) {
-      let msg = `HTTP ${res.status}`;
-      try { const d = await res.json(); msg = d.error?.message || msg; } catch {}
-      throw new Error(msg);
-    }
-
-    const data = await res.json();
-    if (data.error) throw new Error(data.error.message || 'NatureLM error');
-    return data;
-  }
-
   /* ================================================================
      BIRDNET — official browser model
      Runs locally in a Web Worker using TensorFlow.js and BirdNET assets.
@@ -1110,7 +1085,37 @@ If no biological species detected, return empty species array.`;
     return new Float32Array(rendered.getChannelData(0));
   }
 
-  async function callBirdNet(base64Audio) {
+  async function callServerBirdNet(base64Audio, mimeType) {
+    const res = await fetch(apiUrl('/api/birdnet'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        audio_base64: base64Audio,
+        mime_type: (mimeType || 'audio/webm').split(';')[0],
+      })
+    });
+
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { const d = await res.json(); msg = d.error?.message || msg; } catch {}
+      throw new Error(msg);
+    }
+
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message || 'BirdNET error');
+    return data;
+  }
+
+  async function callBirdNet(base64Audio, mimeType) {
+    try {
+      return await callServerBirdNet(base64Audio, mimeType);
+    } catch (serverError) {
+      console.info('BirdNET server fallback unavailable:', serverError.message);
+    }
+    return callBrowserBirdNet(base64Audio);
+  }
+
+  async function callBrowserBirdNet(base64Audio) {
     const [worker, pcmAudio] = await Promise.all([
       getBirdNetWorker(),
       decodeAudioTo48k(base64Audio),
@@ -1163,6 +1168,93 @@ If no biological species detected, return empty species array.`;
     });
   }
 
+  async function getYamNetWorker() {
+    if (yamNetWorkerPromise) return yamNetWorkerPromise;
+
+    yamNetWorkerPromise = new Promise((resolve, reject) => {
+      if (!window.Worker) {
+        reject(new Error('YAMNet needs browser Web Worker support.'));
+        return;
+      }
+
+      const workerUrl = new URL('assets/yamnet-worker.js', window.location.href);
+      workerUrl.searchParams.set('tf', 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0/dist/tf.min.js');
+      const worker = new Worker(workerUrl.toString());
+      const timeout = setTimeout(() => {
+        worker.terminate();
+        yamNetWorkerPromise = null;
+        reject(new Error('YAMNet model load timed out.'));
+      }, 45_000);
+
+      worker.addEventListener('message', event => {
+        if (event.data?.message === 'loaded') {
+          clearTimeout(timeout);
+          resolve(worker);
+        } else if (event.data?.message === 'error') {
+          clearTimeout(timeout);
+          yamNetWorkerPromise = null;
+          reject(new Error(event.data.error || 'YAMNet model failed to load.'));
+        }
+      });
+      worker.addEventListener('error', event => {
+        clearTimeout(timeout);
+        yamNetWorkerPromise = null;
+        reject(new Error(event.message || 'YAMNet model failed to load.'));
+      }, { once: true });
+    });
+
+    return yamNetWorkerPromise;
+  }
+
+  async function callYamNet(base64Audio) {
+    const [worker, pcm48k] = await Promise.all([
+      getYamNetWorker(),
+      decodeAudioTo48k(base64Audio),
+    ]);
+    const pcmAudio = resamplePcm(pcm48k, 48000, 16000);
+    const id = ++yamNetPredictionId;
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error('YAMNet analysis timed out.'));
+      }, 30_000);
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        worker.removeEventListener('message', onMessage);
+        worker.removeEventListener('error', onError);
+      };
+
+      const onError = event => {
+        cleanup();
+        reject(new Error(event.message || 'YAMNet analysis failed.'));
+      };
+
+      const onMessage = event => {
+        const data = event.data || {};
+        if (data.message === 'error') {
+          cleanup();
+          reject(new Error(data.error || 'YAMNet analysis failed.'));
+          return;
+        }
+        if (data.message !== 'pooled') return;
+        cleanup();
+        const detections = (data.pooled || []).map(item => ({
+          label: item.label,
+          commonName: item.label,
+          score: Math.round(Number(item.confidence) * 100),
+          source: 'YAMNet AudioSet',
+        }));
+        resolve({ results: [{ model: 'YAMNet AudioSet', detections, predictionId: id }] });
+      };
+
+      worker.addEventListener('message', onMessage);
+      worker.addEventListener('error', onError);
+      worker.postMessage({ message: 'predict', pcmAudio }, [pcmAudio.buffer]);
+    });
+  }
+
   function parseBirdNetLabel(det) {
     if (det.commonName || det.scientificName) {
       return {
@@ -1200,26 +1292,24 @@ If no biological species detected, return empty species array.`;
     return out;
   }
 
-  function natureLmToSpecies(result) {
-    const source = result?.model || 'NatureLM-audio';
-    const explicit = Array.isArray(result?.species) ? result.species : [];
-    const rawItems = explicit.length
-      ? explicit
-      : String(result?.raw_text || result?.answer || '')
-        .split(/\n|,|;/)
-        .map(item => ({ common_name: item.replace(/^#?\d+(?:\.\d+)?s?\s*[-:]\s*/i, '') }));
-
-    return rawItems
-      .map(sp => normalizeDetectedSpecies({
-        ...sp,
-        confidence: sp.confidence || 'medium',
-        probability_score: sp.probability_score ?? sp.probability ?? 55,
-        sound_description: sp.sound_description || result?.soundscape_summary || '',
-        _detected_by: source,
-        _source: 'naturelm',
-      }, source))
-      .filter(Boolean)
-      .filter(sp => !/^(none|unknown|no species|no animal|no wildlife)$/i.test(sp.common_name));
+  function yamNetToSpecies(yamNetResult) {
+    const out = [];
+    for (const result of (yamNetResult?.results || [])) {
+      for (const det of (result.detections || [])) {
+        const species = normalizeDetectedSpecies({
+          common_name: det.commonName || det.label,
+          scientific_name: '',
+          confidence: det.score >= 70 ? 'high' : det.score >= 40 ? 'medium' : 'low',
+          probability_score: det.score,
+          sound_description: 'YAMNet detected this broad animal sound class.',
+          _raw_label: det.label,
+          _detected_by: result.model || 'YAMNet AudioSet',
+          _source: 'yamnet',
+        }, result.model || 'YAMNet AudioSet');
+        if (species) out.push(species);
+      }
+    }
+    return out;
   }
 
   /* ================================================================
@@ -1337,7 +1427,7 @@ If no biological species detected, return empty species array.`;
 
     const sourceClass = sp._source === 'birdnet'
       ? 'source-badge--birdnet'
-      : sp._source === 'naturelm' ? 'source-badge--naturelm' : 'source-badge--gemini';
+      : sp._source === 'yamnet' ? 'source-badge--yamnet' : 'source-badge--gemini';
     const sourceBadge = `<span class="source-badge ${sourceClass}">${esc(sp._detected_by || 'Gemini')}</span>`;
 
     card.innerHTML = `
@@ -1607,25 +1697,23 @@ If no biological species detected, return empty species array.`;
       return;
     }
 
-    const [birdnetRaw, geminiResult, natureLmResult] = await Promise.allSettled([
+    const [birdnetRaw, geminiResult, yamNetResult] = await Promise.allSettled([
       callBirdNet(b64, mimeType),
       callGemini(b64, mimeType),
-      callNatureLM(b64, mimeType),
+      callYamNet(b64),
     ]);
 
     const birdnetResults = (birdnetRaw.status === 'fulfilled' ? birdnetRaw.value.results : []) || [];
     const birdnetSpecies = birdnetToSpecies(birdnetResults);
-    const natureLmSpecies = natureLmResult.status === 'fulfilled'
-      ? natureLmToSpecies(natureLmResult.value)
+    const yamNetSpecies = yamNetResult.status === 'fulfilled'
+      ? yamNetToSpecies(yamNetResult.value)
       : [];
     const modelMessages = new Map();
     if (birdnetRaw.status === 'rejected') {
       modelMessages.set('BirdNET', birdnetRaw.reason?.message || 'BirdNET could not analyze this audio.');
     }
-    if (natureLmResult.status === 'fulfilled' && natureLmResult.value?.disabled) {
-      modelMessages.set('NatureLM-audio', natureLmResult.value.message || 'Start the NatureLM bridge to enable this model.');
-    } else if (natureLmResult.status === 'rejected') {
-      modelMessages.set('NatureLM-audio', natureLmResult.reason?.message || 'NatureLM bridge is not running.');
+    if (yamNetResult.status === 'rejected') {
+      modelMessages.set('YAMNet AudioSet', yamNetResult.reason?.message || 'YAMNet could not analyze this audio.');
     }
 
     if (geminiResult.status === 'rejected') {
@@ -1650,7 +1738,7 @@ If no biological species detected, return empty species array.`;
       }, 'Gemini AI'))
       .filter(Boolean);
 
-    const species = [...geminiSpecies, ...birdnetSpecies, ...natureLmSpecies];
+    const species = [...geminiSpecies, ...birdnetSpecies, ...yamNetSpecies];
 
     if (!species.length) {
       appendErrorCard('species-grid', 'No Species Detected',
@@ -1714,11 +1802,11 @@ If no biological species detected, return empty species array.`;
       type:  'birdnet',
       icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 6c0 0-4.5 1.5-7 2L12 4l-2 2-4-1s2 4 4 5H4l2 3h14c2-1 3-3 2-7z"/></svg>`,
     },
-    ...NATURELM_MODEL_GROUPS.map(group => ({
+    ...YAMNET_MODEL_GROUPS.map(group => ({
       keys:  [group.key],
       label: group.key,
       desc:  group.desc,
-      type:  'naturelm',
+      type:  'yamnet',
       icon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12c4-8 12-8 16 0"/><path d="M4 12c4 8 12 8 16 0"/><circle cx="12" cy="12" r="2"/><path d="M12 4v2M12 18v2M4 12H2M22 12h-2"/></svg>`,
     })),
   ];

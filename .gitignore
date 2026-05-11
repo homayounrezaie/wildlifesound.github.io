@@ -1,12 +1,6 @@
-# ── Secrets ────────────────────────────────────────────────────────
-# Never commit real API keys.
-.env
 .env.local
-.env*.local
-
-# ── Claude Code local settings ────────────────────────────────────
-.claude/
-
-# ── OS junk ───────────────────────────────────────────────────────
 .DS_Store
-Thumbs.db
+.venv/
+.venv-*/
+__pycache__/
+*.pyc
