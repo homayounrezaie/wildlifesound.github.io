@@ -173,6 +173,111 @@
     }
     .toast.error { border-color: var(--danger); color: var(--danger); }
 
+    .key-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 3000;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(4, 8, 14, .54);
+      backdrop-filter: blur(18px);
+    }
+
+    .key-overlay.hidden { display: none; }
+
+    .key-modal {
+      position: relative;
+      width: min(420px, 100%);
+      border-radius: 24px;
+      padding: 28px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .key-close {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      width: 36px;
+      height: 36px;
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      background: var(--surface-2);
+      color: var(--text-muted);
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+    }
+
+    .key-close svg { width: 16px; height: 16px; }
+
+    .key-eyebrow {
+      font: 800 11px/1 'DM Mono', monospace;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 14px;
+    }
+
+    .key-modal h2 {
+      font-size: 24px;
+      line-height: 1.05;
+      letter-spacing: 0;
+      margin-bottom: 10px;
+    }
+
+    .key-modal p {
+      color: var(--text-muted);
+      font-size: 14px;
+      line-height: 1.5;
+      margin-bottom: 18px;
+    }
+
+    #gemini-key-input {
+      width: 100%;
+      height: 48px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text);
+      padding: 0 14px;
+      font: 650 14px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+      outline: none;
+    }
+
+    #gemini-key-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 4px rgba(77, 163, 255, .14);
+    }
+
+    #gemini-key-input[aria-invalid="true"] { border-color: var(--danger); }
+
+    .key-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .key-actions button {
+      min-height: 42px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      padding: 0 16px;
+      font-weight: 800;
+      cursor: pointer;
+      color: var(--text);
+      background: var(--surface-2);
+    }
+
+    .key-actions button[type="submit"] {
+      border-color: transparent;
+      color: #fff;
+      background: var(--accent);
+    }
+
     /* ================================================================
        SECTION 1 — HERO
     ================================================================ */

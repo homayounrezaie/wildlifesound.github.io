@@ -73,7 +73,7 @@ For the best public deployment, keep API keys server-side. Deploy the included A
 </script>
 ```
 
-For the static GitHub Pages demo, visitors are prompted for their own Gemini API key when they try detection. The key is stored only in that browser tab with `sessionStorage`.
+For the static GitHub Pages demo, visitors are prompted for their own Gemini API key before recording or uploading. The key is stored temporarily in that browser tab and cleared when they leave the page.
 
 ## Models
 

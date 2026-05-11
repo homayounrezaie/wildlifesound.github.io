@@ -49,6 +49,7 @@
     ['localhost', '127.0.0.1'].includes(window.location.hostname);
   const API_BASE = (window.WILDLIFE_API_BASE || '').replace(/\/$/, '');
   const HAS_API_SERVER = HAS_LOCAL_API || Boolean(API_BASE);
+  const GEMINI_KEY_STORAGE = 'wildlife-gemini-api-key';
 
   function apiUrl(path) {
     if (HAS_LOCAL_API) return path;
@@ -56,19 +57,88 @@
     throw new Error('Detection needs an API server. Run npm run dev locally, or deploy the API routes and set window.WILDLIFE_API_BASE.');
   }
 
-  function getBrowserGeminiKey() {
-    const storageKey = 'wildlife-gemini-api-key';
-    const existing = sessionStorage.getItem(storageKey);
-    if (existing) return existing;
+  function clearBrowserGeminiKey() {
+    if (!HAS_API_SERVER) sessionStorage.removeItem(GEMINI_KEY_STORAGE);
+  }
 
-    const key = window.prompt(
-      'Enter your Gemini API key to analyze audio on the online demo. The key is saved only for this browser tab.'
-    );
-    if (!key || !key.trim()) {
-      throw new Error('Gemini API key is required for the online demo.');
+  window.addEventListener('pagehide', clearBrowserGeminiKey);
+
+  function ensureBrowserGeminiKey() {
+    if (HAS_API_SERVER) return Promise.resolve('');
+    const existing = sessionStorage.getItem(GEMINI_KEY_STORAGE);
+    if (existing) return Promise.resolve(existing);
+
+    const overlay = $('gemini-key-overlay');
+    const form = $('gemini-key-form');
+    const input = $('gemini-key-input');
+    const cancelBtn = $('gemini-key-cancel');
+    const closeBtn = $('gemini-key-close');
+
+    if (!overlay || !form || !input || !cancelBtn || !closeBtn) {
+      const fallback = window.prompt('Enter your Gemini API key to start recording. It is temporary and removed when you leave this page.');
+      if (!fallback?.trim()) return Promise.reject(new Error('Gemini API key is required for the online demo.'));
+      sessionStorage.setItem(GEMINI_KEY_STORAGE, fallback.trim());
+      return Promise.resolve(fallback.trim());
     }
-    sessionStorage.setItem(storageKey, key.trim());
-    return key.trim();
+
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        overlay.classList.add('hidden');
+        document.body.style.overflow = '';
+        form.onsubmit = null;
+        input.oninput = null;
+        cancelBtn.onclick = null;
+        closeBtn.onclick = null;
+        overlay.onclick = null;
+        document.removeEventListener('keydown', onKeyDown);
+      };
+
+      const cancel = () => {
+        cleanup();
+        reject(new Error('Gemini API key is required for the online demo.'));
+      };
+
+      const onKeyDown = event => {
+        if (event.key === 'Escape') cancel();
+      };
+
+      form.onsubmit = event => {
+        event.preventDefault();
+        const key = input.value.trim();
+        if (!key) {
+          input.setAttribute('aria-invalid', 'true');
+          input.focus();
+          return;
+        }
+        sessionStorage.setItem(GEMINI_KEY_STORAGE, key);
+        cleanup();
+        resolve(key);
+      };
+
+      input.oninput = () => input.removeAttribute('aria-invalid');
+      cancelBtn.onclick = cancel;
+      closeBtn.onclick = cancel;
+      overlay.onclick = event => {
+        if (event.target === overlay) cancel();
+      };
+      document.addEventListener('keydown', onKeyDown);
+
+      input.value = '';
+      input.removeAttribute('aria-invalid');
+      overlay.classList.remove('hidden');
+      document.body.style.overflow = 'hidden';
+      setTimeout(() => input.focus(), 50);
+    });
+  }
+
+  async function requireGeminiKeyForStaticDemo() {
+    try {
+      await ensureBrowserGeminiKey();
+      return true;
+    } catch (err) {
+      toast(err.message || 'Gemini API key is required.', 'error');
+      return false;
+    }
   }
 
   // Live chunk detection state
@@ -350,6 +420,7 @@
   ================================================================ */
   async function startRecording() {
     if (isRecording || isProcessing) return;
+    if (!(await requireGeminiKeyForStaticDemo())) return;
 
     $('species-grid').innerHTML = '';
     $('analyse-again-btn')?.remove();
@@ -820,7 +891,7 @@ If no biological species detected, return empty species array.`;
 
     const endpoint = HAS_API_SERVER
       ? apiUrl('/api/analyse')
-      : `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL_ID}:generateContent?key=${encodeURIComponent(getBrowserGeminiKey())}`;
+      : `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL_ID}:generateContent?key=${encodeURIComponent(await ensureBrowserGeminiKey())}`;
 
     const res = await fetch(endpoint, {
       method: 'POST',
@@ -832,7 +903,7 @@ If no biological species detected, return empty species array.`;
       let msg = `HTTP ${res.status}`;
       try { const d = await res.json(); msg += ': ' + (d.error?.message || res.statusText); } catch {}
       if (!HAS_API_SERVER && (res.status === 400 || res.status === 401 || res.status === 403)) {
-        sessionStorage.removeItem('wildlife-gemini-api-key');
+        sessionStorage.removeItem(GEMINI_KEY_STORAGE);
       }
       throw new Error(msg);
     }
@@ -1583,8 +1654,19 @@ If no biological species detected, return empty species array.`;
     const input = $('upload-input');
     if (!zone || !input) return;
 
-    zone.addEventListener('click', () => { if (!isProcessing) input.click(); });
-    zone.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } });
+    zone.addEventListener('click', async () => {
+      if (isProcessing) return;
+      if (!(await requireGeminiKeyForStaticDemo())) return;
+      input.click();
+    });
+    zone.addEventListener('keydown', async e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        if (isProcessing) return;
+        if (!(await requireGeminiKeyForStaticDemo())) return;
+        input.click();
+      }
+    });
 
     input.addEventListener('change', () => {
       if (input.files?.[0]) handleUploadedFile(input.files[0]);
@@ -1606,6 +1688,8 @@ If no biological species detected, return empty species array.`;
   }
 
   async function handleUploadedFile(file) {
+    if (!(await requireGeminiKeyForStaticDemo())) return;
+
     // Validate type
     const mime = file.type || '';
     const ext  = file.name.split('.').pop().toLowerCase();
