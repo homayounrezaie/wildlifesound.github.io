@@ -10,8 +10,10 @@
      CONSTANTS
   ================================================================ */
   const MAX_RECORDING_SECONDS = 60;
+  const GEMINI_MODEL_ID = 'gemini-2.5-flash-lite';
+  const GEMINI_MODEL_LABEL = 'Gemini 2.5 Flash Lite';
   const GEMINI_MODEL_GROUPS = [
-    { key: 'Gemini 2.5 Flash Lite', desc: 'Fast Gemini wildlife detector' },
+    { key: GEMINI_MODEL_LABEL, desc: 'Fast Gemini wildlife detector' },
   ];
   const YAMNET_MODEL_GROUPS = [
     { key: 'YAMNet AudioSet', desc: 'Simple browser audio event model' },
@@ -46,11 +48,27 @@
   const HAS_LOCAL_API = window.location.protocol.startsWith('http') &&
     ['localhost', '127.0.0.1'].includes(window.location.hostname);
   const API_BASE = (window.WILDLIFE_API_BASE || '').replace(/\/$/, '');
+  const HAS_API_SERVER = HAS_LOCAL_API || Boolean(API_BASE);
 
   function apiUrl(path) {
     if (HAS_LOCAL_API) return path;
     if (API_BASE) return `${API_BASE}${path}`;
     throw new Error('Detection needs an API server. Run npm run dev locally, or deploy the API routes and set window.WILDLIFE_API_BASE.');
+  }
+
+  function getBrowserGeminiKey() {
+    const storageKey = 'wildlife-gemini-api-key';
+    const existing = sessionStorage.getItem(storageKey);
+    if (existing) return existing;
+
+    const key = window.prompt(
+      'Enter your Gemini API key to analyze audio on the online demo. The key is saved only for this browser tab.'
+    );
+    if (!key || !key.trim()) {
+      throw new Error('Gemini API key is required for the online demo.');
+    }
+    sessionStorage.setItem(storageKey, key.trim());
+    return key.trim();
   }
 
   // Live chunk detection state
@@ -800,7 +818,11 @@ If no biological species detected, return empty species array.`;
       generationConfig: { temperature: 0.1 }
     };
 
-    const res = await fetch(apiUrl('/api/analyse'), {
+    const endpoint = HAS_API_SERVER
+      ? apiUrl('/api/analyse')
+      : `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL_ID}:generateContent?key=${encodeURIComponent(getBrowserGeminiKey())}`;
+
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -809,6 +831,9 @@ If no biological species detected, return empty species array.`;
     if (!res.ok) {
       let msg = `HTTP ${res.status}`;
       try { const d = await res.json(); msg += ': ' + (d.error?.message || res.statusText); } catch {}
+      if (!HAS_API_SERVER && (res.status === 400 || res.status === 401 || res.status === 403)) {
+        sessionStorage.removeItem('wildlife-gemini-api-key');
+      }
       throw new Error(msg);
     }
 
@@ -843,7 +868,14 @@ If no biological species detected, return empty species array.`;
     rawText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
 
     try {
-      return JSON.parse(rawText);
+      const parsed = JSON.parse(rawText);
+      return {
+        ...parsed,
+        species: (parsed.species || []).map(sp => ({
+          ...sp,
+          _modelLabel: GEMINI_MODEL_LABEL,
+        })),
+      };
     } catch {
       const err = new Error('JSON parse failed');
       err.raw = rawText;

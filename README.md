@@ -65,13 +65,15 @@ Supported formats: `.mp3`, `.wav`, `.m4a`, `.webm`, `.ogg`, `.flac`.
 
 ## Hosting
 
-Keep API keys server-side. Static GitHub Pages cannot hide a shared Gemini key. For public use, deploy the included API routes somewhere server-capable, then point the frontend to it with:
+For the best public deployment, keep API keys server-side. Deploy the included API routes somewhere server-capable, then point the frontend to it with:
 
 ```html
 <script>
   window.WILDLIFE_API_BASE = "https://your-api-host.example";
 </script>
 ```
+
+For the static GitHub Pages demo, visitors are prompted for their own Gemini API key when they try detection. The key is stored only in that browser tab with `sessionStorage`.
 
 ## Models
 
